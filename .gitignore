@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+target/
+dist/
+*.js
+*.d.ts
+*.js.map
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Lambda build artifacts
+*.zip
+bootstrap

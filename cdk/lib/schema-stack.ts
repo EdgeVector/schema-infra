@@ -1,0 +1,203 @@
+import {
+  Stack,
+  StackProps,
+  Duration,
+  CfnOutput,
+  RemovalPolicy,
+} from "aws-cdk-lib";
+import { Construct } from "constructs";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
+
+export interface SchemaServiceStackProps extends StackProps {
+  environment?: string; // 'dev' or 'prod'
+}
+
+export class SchemaServiceStack extends Stack {
+  constructor(scope: Construct, id: string, props?: SchemaServiceStackProps) {
+    super(scope, id, props);
+
+    const envName = props?.environment || "dev";
+    const isProd = envName === "prod";
+
+    // =====================================================
+    // DynamoDB Table for Schema Storage
+    // Uses PK (user_id) and SK (schema_name) as key schema
+    // to match DynamoDbSchemaStore in fold_db
+    // =====================================================
+    const schemasTable = new dynamodb.Table(this, "SchemasTable", {
+      partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+      pointInTimeRecovery: true,
+    });
+
+    // =====================================================
+    // Schema Service Lambda Function
+    // =====================================================
+    const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      handler: "bootstrap",
+      code: lambda.Code.fromAsset(
+        "../lambdas/schema_service/target/lambda/schema_service-extracted",
+      ),
+      timeout: Duration.seconds(30),
+      memorySize: 256,
+      environment: {
+        SCHEMA_STORAGE_PATH: "/tmp/schema_service",
+        SCHEMAS_TABLE: schemasTable.tableName,
+        RUST_LOG: "info",
+      },
+    });
+
+    // Grant Lambda access to DynamoDB
+    schemasTable.grantReadWriteData(schemaServiceFn);
+
+    // =====================================================
+    // HTTP API Gateway with CORS
+    // =====================================================
+    const httpApi = new apigwv2.HttpApi(this, "SchemaHttpApi", {
+      apiName: `schema-service-${envName}`,
+      corsPreflight: {
+        allowOrigins: ["*"],
+        allowMethods: [
+          apigwv2.CorsHttpMethod.GET,
+          apigwv2.CorsHttpMethod.POST,
+          apigwv2.CorsHttpMethod.OPTIONS,
+        ],
+        allowHeaders: ["Content-Type", "Authorization"],
+        maxAge: Duration.days(1),
+      },
+    });
+
+    // Root endpoint
+    httpApi.addRoutes({
+      path: "/",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaRootIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // Health check endpoint
+    httpApi.addRoutes({
+      path: "/health",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaHealthIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // REST API endpoints
+    httpApi.addRoutes({
+      path: "/api/schemas",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaListIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/api/schemas/available",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaAvailableIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/api/schemas/{schemaId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaGetIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // Support singular /api/schema/{schemaId} used by DataFold client
+    httpApi.addRoutes({
+      path: "/api/schema/{schemaId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaGetSingularIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // Catch-all for unmatched routes
+    httpApi.addRoutes({
+      path: "/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaCatchAllIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // =====================================================
+    // Custom Domain (schema.folddb.com)
+    // =====================================================
+    // To enable, set SCHEMA_DOMAIN_CERT_ARN environment variable
+    // The certificate must be in us-east-1 for API Gateway custom domains
+
+    const schemaCertArn = process.env.SCHEMA_DOMAIN_CERT_ARN;
+
+    if (schemaCertArn) {
+      const schemaCert = acm.Certificate.fromCertificateArn(
+        this,
+        "SchemaDomainCert",
+        schemaCertArn,
+      );
+
+      const schemaDomainName = new apigwv2.DomainName(
+        this,
+        "SchemaDomainName",
+        {
+          domainName: "schema.folddb.com",
+          certificate: schemaCert,
+        },
+      );
+
+      new apigwv2.ApiMapping(this, "SchemaApiMapping", {
+        api: httpApi,
+        domainName: schemaDomainName,
+      });
+
+      new CfnOutput(this, "SchemaServiceDomain", {
+        value: "schema.folddb.com",
+        description: "Custom domain for schema service",
+      });
+
+      new CfnOutput(this, "SchemaServiceDomainTarget", {
+        value: schemaDomainName.regionalDomainName,
+        description: "API Gateway domain target for DNS CNAME record",
+      });
+    }
+
+    // =====================================================
+    // Outputs
+    // =====================================================
+    new CfnOutput(this, "SchemaServiceApiUrl", {
+      value: httpApi.apiEndpoint,
+      description: "Schema service API endpoint",
+    });
+
+    new CfnOutput(this, "SchemasTableName", {
+      value: schemasTable.tableName,
+      description: "DynamoDB table for schema storage",
+    });
+
+    new CfnOutput(this, "SchemaServiceFunctionName", {
+      value: schemaServiceFn.functionName,
+      description: "Schema service Lambda function name",
+    });
+  }
+}

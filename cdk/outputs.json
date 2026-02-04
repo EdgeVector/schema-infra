@@ -1,0 +1,7 @@
+{
+  "SchemaServiceStack-dev": {
+    "SchemaServiceFunctionName": "SchemaServiceStack-dev-SchemaServiceFnDF75D4BE-zkQrXKDzPgY3",
+    "SchemasTableName": "SchemaServiceStack-dev-SchemasTable1DC069C3-80LG5Y2KTHYQ",
+    "SchemaServiceApiUrl": "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+  }
+}

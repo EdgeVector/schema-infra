@@ -1,0 +1,40 @@
+[package]
+name = "schema_service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "schema_service"
+path = "src/main.rs"
+
+[dependencies]
+# FoldDB core library (contains schema service implementation)
+fold_db = { path = "../../../fold_db", features = ["aws-backend"] }
+
+# AWS Lambda runtime
+lambda_http = "0.13"
+lambda_runtime = "0.13"
+tokio = { version = "1", features = ["full"] }
+
+# AWS SDK
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-dynamodb = "1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# OpenSSL vendored for cross-compilation
+openssl = { version = "*", features = ["vendored"] }
+
+[profile.dev-release]
+inherits = "release"
+opt-level = 3
+lto = "off"
+codegen-units = 16
+debug = false
+panic = "abort"

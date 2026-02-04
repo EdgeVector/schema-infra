@@ -1,0 +1,25 @@
+{
+    "name": "schema-infra",
+    "version": "1.0.0",
+    "bin": {
+        "schema-infra": "bin/schema-infra.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc -w",
+        "cdk": "cdk",
+        "deploy": "cdk deploy",
+        "synth": "cdk synth"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "aws-cdk": "^2.170.0",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.3.0"
+    },
+    "dependencies": {
+        "aws-cdk-lib": "^2.170.0",
+        "constructs": "^10.0.0",
+        "source-map-support": "^0.5.21"
+    }
+}
