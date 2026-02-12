@@ -21,6 +21,7 @@ export class SchemaServiceStack extends Stack {
     super(scope, id, props);
 
     const envName = props?.environment || "dev";
+    const isProd = envName === "prod";
 
     // =====================================================
     // DynamoDB Table for Schema Storage
@@ -139,18 +140,13 @@ export class SchemaServiceStack extends Stack {
     });
 
     // =====================================================
-    // Custom Domain (schema.folddb.com)
+    // Custom Domain (schema.folddb.com) — prod only
     // =====================================================
-    // To enable, set SCHEMA_DOMAIN_CERT_ARN environment variable
-    // The certificate must be in us-east-1 for API Gateway custom domains
-
-    const schemaCertArn = process.env.SCHEMA_DOMAIN_CERT_ARN;
-
-    if (schemaCertArn) {
+    if (isProd) {
       const schemaCert = acm.Certificate.fromCertificateArn(
         this,
         "SchemaDomainCert",
-        schemaCertArn,
+        "arn:aws:acm:us-east-1:152335099025:certificate/18c59c49-1581-48b4-ba6c-402bfd3ac2d6",
       );
 
       const schemaDomainName = new apigwv2.DomainName(
