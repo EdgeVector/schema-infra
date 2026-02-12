@@ -219,6 +219,65 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_response_success() {
+        let resp = json_response(200, json!({"ok": true})).unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        let body = match resp.body() {
+            Body::Text(s) => s.clone(),
+            _ => panic!("Expected text body"),
+        };
+        assert!(body.contains("\"ok\":true") || body.contains("\"ok\": true"));
+    }
+
+    #[test]
+    fn test_json_response_error_status() {
+        let resp = json_response(404, json!({"error": "not found"})).unwrap();
+        assert_eq!(resp.status(), 404);
+        let body = match resp.body() {
+            Body::Text(s) => s.clone(),
+            _ => panic!("Expected text body"),
+        };
+        assert!(body.contains("not found"));
+    }
+
+    #[test]
+    fn test_json_response_includes_cors_headers() {
+        let resp = json_response(500, json!({"error": "fail"})).unwrap();
+        assert_eq!(
+            resp.headers().get("Access-Control-Allow-Origin").unwrap(),
+            "*"
+        );
+        assert_eq!(
+            resp.headers().get("Access-Control-Allow-Methods").unwrap(),
+            "GET, POST, OPTIONS"
+        );
+        assert_eq!(
+            resp.headers().get("Access-Control-Allow-Headers").unwrap(),
+            "Content-Type, Authorization"
+        );
+    }
+
+    #[test]
+    fn test_json_response_400_bad_request() {
+        let resp = json_response(400, json!({"error": "Invalid JSON: unexpected EOF"})).unwrap();
+        assert_eq!(resp.status(), 400);
+        let body = match resp.body() {
+            Body::Text(s) => s.clone(),
+            _ => panic!("Expected text body"),
+        };
+        assert!(body.contains("Invalid JSON"));
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Initialize tracing with JSON formatting for CloudWatch

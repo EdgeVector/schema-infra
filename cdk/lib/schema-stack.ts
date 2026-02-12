@@ -21,7 +21,6 @@ export class SchemaServiceStack extends Stack {
     super(scope, id, props);
 
     const envName = props?.environment || "dev";
-    const isProd = envName === "prod";
 
     // =====================================================
     // DynamoDB Table for Schema Storage
