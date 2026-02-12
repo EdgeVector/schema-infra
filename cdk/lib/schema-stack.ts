@@ -122,7 +122,7 @@ export class SchemaServiceStack extends Stack {
       ),
     });
 
-    // Support singular /api/schema/{schemaId} used by DataFold client
+    // Support singular /api/schema/{schemaId} used by FoldDB client
     httpApi.addRoutes({
       path: "/api/schema/{schemaId}",
       methods: [apigwv2.HttpMethod.GET],

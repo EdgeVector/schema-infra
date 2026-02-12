@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Schema Registry — FoldDB Global Schema Service</title>
+    <meta
+      name="description"
+      content="Browse the global schema registry for FoldDB. View registered schemas, field definitions, and topology structures."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Gradient Orbs Background -->
+    <div class="bg-orbs">
+      <div class="orb orb-1"></div>
+      <div class="orb orb-2"></div>
+      <div class="orb orb-3"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="nav">
+      <div class="nav-container">
+        <a href="https://folddb.com" class="nav-logo">
+          <span class="logo-icon">⬡</span>
+          <span class="logo-text">fold<span class="logo-accent">db</span></span>
+        </a>
+        <div class="nav-links">
+          <a href="https://folddb.com/#features">Features</a>
+          <a href="https://folddb.com/#quickstart">Quick Start</a>
+          <a href="https://docs.rs/fold_db" target="_blank">Docs</a>
+          <a
+            href="https://github.com/shiba4life/fold_db"
+            target="_blank"
+            class="nav-github"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"
+              />
+            </svg>
+          </a>
+        </div>
+        <button class="nav-mobile-toggle" id="mobileToggle">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+      <div class="hero-container">
+        <div class="hero-badge">
+          <span class="badge-icon">📋</span>
+          <span>Global Schema Registry</span>
+        </div>
+        <h1 class="hero-title">
+          <span class="gradient-text">Schema</span> Registry
+        </h1>
+        <p class="hero-subtitle">
+          Browse the global schema registry. View registered schemas, field
+          definitions, and topology structures shared across all FoldDB nodes.
+        </p>
+        <div class="hero-stats" id="statsContainer">
+          <div class="stat">
+            <span class="stat-value" id="schemaCount">—</span>
+            <span class="stat-label">Schemas</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat">
+            <span class="stat-value" id="totalFields">—</span>
+            <span class="stat-label">Total Fields</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat">
+            <span class="stat-value" id="serviceStatus">—</span>
+            <span class="stat-label">Service Status</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Schema List Section -->
+    <section class="schemas-section" id="schemas">
+      <div class="section-container">
+        <div class="section-header">
+          <span class="section-badge">Registry</span>
+          <h2 class="section-title">
+            Registered <span class="gradient-text">Schemas</span>
+          </h2>
+          <p class="section-subtitle">
+            Click on a schema to view its complete definition including fields
+            and topology structures.
+          </p>
+        </div>
+
+        <!-- Search and Filter -->
+        <div class="schemas-toolbar">
+          <div class="search-container">
+            <svg
+              class="search-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="M21 21l-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              class="search-input"
+              id="schemaSearch"
+              placeholder="Search schemas..."
+            />
+          </div>
+          <div class="filter-buttons">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="Single">Single</button>
+            <button class="filter-btn" data-filter="Range">Range</button>
+            <button class="filter-btn" data-filter="HashRange">
+              HashRange
+            </button>
+          </div>
+        </div>
+
+        <!-- Loading State -->
+        <div class="loading-container" id="loadingContainer">
+          <div class="loading-spinner"></div>
+          <p>Loading schemas from registry...</p>
+        </div>
+
+        <!-- Error State -->
+        <div class="error-container" id="errorContainer" style="display: none">
+          <div class="error-icon">⚠️</div>
+          <h3>Failed to Load Schemas</h3>
+          <p id="errorMessage">Unable to connect to the schema service.</p>
+          <button class="btn btn-primary" id="retryBtn">Retry</button>
+        </div>
+
+        <!-- Empty State -->
+        <div class="empty-container" id="emptyContainer" style="display: none">
+          <div class="empty-icon">📭</div>
+          <h3>No Schemas Found</h3>
+          <p>The schema registry is empty or no schemas match your filter.</p>
+        </div>
+
+        <!-- Schema Grid -->
+        <div class="schemas-grid" id="schemasGrid"></div>
+      </div>
+    </section>
+
+    <!-- Schema Detail Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal" id="schemaModal">
+        <div class="modal-header">
+          <div class="modal-title">
+            <h2 id="modalSchemaName">Schema Name</h2>
+            <span class="type-badge" id="modalSchemaType">Single</span>
+          </div>
+          <button class="modal-close" id="modalClose">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body" id="modalBody">
+          <!-- Content populated by JavaScript -->
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="copyJsonBtn">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+            </svg>
+            Copy JSON
+          </button>
+          <button class="btn btn-primary" id="modalCloseBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-container">
+        <div class="footer-brand">
+          <a href="https://folddb.com" class="footer-logo">
+            <span class="logo-icon">⬡</span>
+            <span class="logo-text"
+              >fold<span class="logo-accent">db</span></span
+            >
+          </a>
+          <p>Global Schema Registry</p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-column">
+            <h4>Product</h4>
+            <a href="https://folddb.com/#features">Features</a>
+            <a href="https://folddb.com/#quickstart">Quick Start</a>
+            <a href="https://folddb.com/#examples">Examples</a>
+          </div>
+          <div class="footer-column">
+            <h4>Resources</h4>
+            <a href="https://docs.rs/fold_db" target="_blank">Documentation</a>
+            <a href="https://github.com/shiba4life/fold_db" target="_blank"
+              >GitHub</a
+            >
+            <a href="https://crates.io/crates/fold_db" target="_blank"
+              >Crates.io</a
+            >
+          </div>
+          <div class="footer-column">
+            <h4>Service</h4>
+            <a href="https://schema.folddb.com/api/health" target="_blank"
+              >Health Check</a
+            >
+            <a
+              href="https://schema.folddb.com/api/schemas/available"
+              target="_blank"
+              >Raw API</a
+            >
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© 2026 FoldDB. Dual-licensed under MIT and Apache 2.0.</p>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
