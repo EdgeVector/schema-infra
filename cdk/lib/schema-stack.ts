@@ -142,6 +142,10 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // Custom Domain (schema.folddb.com) — prod only
     // =====================================================
+    // WARNING: Do NOT rename the construct IDs below ("SchemaDomainCert",
+    // "SchemaDomainName", "SchemaApiMapping"). Changing them causes
+    // CloudFormation to delete+recreate the API Gateway domain, which
+    // generates a new CNAME target and requires a DNS update.
     if (isProd) {
       const schemaCert = acm.Certificate.fromCertificateArn(
         this,
