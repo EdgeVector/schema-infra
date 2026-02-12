@@ -74,6 +74,14 @@ export class SchemaServiceStack extends Stack {
       },
     });
 
+    // Rate limiting: 100 requests/second with burst to 200
+    const stage = httpApi.defaultStage?.node
+      .defaultChild as apigwv2.CfnStage;
+    stage.defaultRouteSettings = {
+      throttlingBurstLimit: 200,
+      throttlingRateLimit: 100,
+    };
+
     // Root endpoint
     httpApi.addRoutes({
       path: "/",

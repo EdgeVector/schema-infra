@@ -16,6 +16,18 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 // Global singleton for Lambda warm starts
 static SCHEMA_STATE: OnceCell<Arc<SchemaServiceState>> = OnceCell::const_new();
 
+/// Build a JSON response with CORS headers
+fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        .body(Body::from(body.to_string()))
+        .map_err(|e| Error::from(format!("Failed to build response: {}", e)))
+}
+
 /// Initialize the schema service state (once per cold start)
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
     SCHEMA_STATE
@@ -71,84 +83,58 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     tracing::info!("Request: {} {}", method, path);
 
     // Route handling based on path
-    let response_body = match (method, path) {
+    match (method, path) {
         // Health check
         ("GET", "/health") | ("GET", "/api/health") => {
-            json!({
+            json_response(200, json!({
                 "status": "healthy",
                 "service": "schema-service"
-            })
+            }))
         }
 
         // List schema names
         ("GET", "/api/schemas") => {
             match state.get_schema_names() {
-                Ok(schema_names) => json!({ "schemas": schema_names }),
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Lock error: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Ok(schema_names) => json_response(200, json!({ "schemas": schema_names })),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get schema names: {}", e)})),
             }
         }
 
         // Get all schemas with definitions
         ("GET", "/api/schemas/available") => {
             match state.get_all_schemas_cached() {
-                Ok(schemas) => json!({ "schemas": schemas }),
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Lock error: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Ok(schemas) => json_response(200, json!({ "schemas": schemas })),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get schemas: {}", e)})),
             }
         }
 
-        // Get specific schema
+        // Get specific schema (singular path)
         (method, path) if method == "GET" && path.starts_with("/api/schema/") => {
             let schema_name = path.trim_start_matches("/api/schema/");
             match state.get_schema_by_name(schema_name) {
-                Ok(Some(schema)) => serde_json::to_value(schema).unwrap_or(json!({"error": "Serialization failed"})),
-                Ok(None) => {
-                    return Ok(Response::builder()
-                        .status(404)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": "Schema not found"}).to_string()))
-                        .unwrap());
+                Ok(Some(schema)) => {
+                    let body = serde_json::to_value(schema)
+                        .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
+                    json_response(200, body)
                 }
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Lock error: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Ok(None) => json_response(404, json!({"error": "Schema not found"})),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
             }
         }
 
         // Get specific schema (plural path variant)
-        (method, path) if method == "GET" && path.starts_with("/api/schemas/") && !path.ends_with("/available") => {
+        // Note: /api/schemas/available is matched by the earlier exact arm,
+        // so this only matches actual schema name lookups
+        (method, path) if method == "GET" && path.starts_with("/api/schemas/") => {
             let schema_name = path.trim_start_matches("/api/schemas/");
             match state.get_schema_by_name(schema_name) {
-                Ok(Some(schema)) => serde_json::to_value(schema).unwrap_or(json!({"error": "Serialization failed"})),
-                Ok(None) => {
-                    return Ok(Response::builder()
-                        .status(404)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": "Schema not found"}).to_string()))
-                        .unwrap());
+                Ok(Some(schema)) => {
+                    let body = serde_json::to_value(schema)
+                        .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
+                    json_response(200, body)
                 }
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Lock error: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Ok(None) => json_response(404, json!({"error": "Schema not found"})),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
             }
         }
 
@@ -157,30 +143,28 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             let body = match event.body() {
                 Body::Text(s) => s.clone(),
                 Body::Binary(b) => String::from_utf8_lossy(b).to_string(),
-                Body::Empty => "{}".to_string(),
+                Body::Empty => {
+                    return json_response(400, json!({"error": "Request body is empty"}));
+                }
             };
 
-            let request: Value = serde_json::from_str(&body)
-                .unwrap_or(json!({}));
+            let request: Value = match serde_json::from_str(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    return json_response(400, json!({"error": format!("Invalid JSON: {}", e)}));
+                }
+            };
 
             // Extract schema and mutation_mappers from request
             let schema = match request.get("schema") {
                 Some(s) => match serde_json::from_value(s.clone()) {
                     Ok(schema) => schema,
                     Err(e) => {
-                        return Ok(Response::builder()
-                            .status(400)
-                            .header("Content-Type", "application/json")
-                            .body(Body::from(json!({"error": format!("Invalid schema: {}", e)}).to_string()))
-                            .unwrap());
+                        return json_response(400, json!({"error": format!("Invalid schema: {}", e)}));
                     }
                 },
                 None => {
-                    return Ok(Response::builder()
-                        .status(400)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": "Missing 'schema' field"}).to_string()))
-                        .unwrap());
+                    return json_response(400, json!({"error": "Missing 'schema' field"}));
                 }
             };
 
@@ -190,18 +174,12 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
 
             match state.add_schema(schema, mutation_mappers).await {
                 Ok(outcome) => {
-                    json!({
+                    json_response(200, json!({
                         "ok": true,
                         "outcome": format!("{:?}", outcome)
-                    })
+                    }))
                 }
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Failed to add schema: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Err(e) => json_response(500, json!({"error": format!("Failed to add schema: {}", e)})),
             }
         }
 
@@ -210,25 +188,19 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             match state.load_schemas().await {
                 Ok(_) => {
                     let count = state.get_schema_count();
-                    json!({
+                    json_response(200, json!({
                         "ok": true,
                         "count": count,
                         "message": format!("Reloaded {} schemas", count)
-                    })
+                    }))
                 }
-                Err(e) => {
-                    return Ok(Response::builder()
-                        .status(500)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": format!("Failed to reload: {}", e)}).to_string()))
-                        .unwrap());
-                }
+                Err(e) => json_response(500, json!({"error": format!("Failed to reload: {}", e)})),
             }
         }
 
         // Root endpoint
         ("GET", "/") | ("POST", "/") => {
-            json!({
+            json_response(200, json!({
                 "service": "FoldDB Schema Registry",
                 "version": "1.0.0",
                 "endpoints": {
@@ -239,27 +211,12 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                     "POST /api/schemas": "Add new schema",
                     "POST /api/schemas/reload": "Reload schemas from storage"
                 }
-            })
+            }))
         }
 
         // Not found
-        _ => {
-            return Ok(Response::builder()
-                .status(404)
-                .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Not found: {} {}", method, path)}).to_string()))
-                .unwrap());
-        }
-    };
-
-    Ok(Response::builder()
-        .status(200)
-        .header("Content-Type", "application/json")
-        .header("Access-Control-Allow-Origin", "*")
-        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        .body(Body::from(response_body.to_string()))
-        .unwrap())
+        _ => json_response(404, json!({"error": format!("Not found: {} {}", method, path)})),
+    }
 }
 
 #[tokio::main]
