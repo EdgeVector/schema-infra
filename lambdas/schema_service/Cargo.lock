@@ -3728,13 +3728,10 @@ dependencies = [
 name = "schema_service"
 version = "0.1.0"
 dependencies = [
- "aws-config",
- "aws-sdk-dynamodb",
  "fold_db",
  "lambda_http",
  "lambda_runtime",
  "openssl",
- "serde",
  "serde_json",
  "tokio",
  "tracing",

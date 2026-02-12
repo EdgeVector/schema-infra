@@ -47,7 +47,6 @@ export class SchemaServiceStack extends Stack {
       timeout: Duration.seconds(30),
       memorySize: 256,
       environment: {
-        SCHEMA_STORAGE_PATH: "/tmp/schema_service",
         SCHEMAS_TABLE: schemasTable.tableName,
         RUST_LOG: "info",
       },
@@ -135,16 +134,6 @@ export class SchemaServiceStack extends Stack {
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "SchemaGetSingularIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    // Catch-all for unmatched routes
-    httpApi.addRoutes({
-      path: "/{proxy+}",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaCatchAllIntegration",
         schemaServiceFn,
       ),
     });
