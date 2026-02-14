@@ -121,6 +121,15 @@ export class SchemaServiceStack extends Stack {
     });
 
     httpApi.addRoutes({
+      path: "/api/schemas/similar/{schemaId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "SchemaSimilarIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    httpApi.addRoutes({
       path: "/api/schemas/{schemaId}",
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(

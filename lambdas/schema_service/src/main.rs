@@ -8,6 +8,7 @@ use fold_db::storage::{CloudConfig, ExplicitTables};
 
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -32,10 +33,14 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
     SCHEMA_STATE
         .get_or_try_init(|| async {
-            let table_name = env::var("SCHEMAS_TABLE")
-                .unwrap_or_else(|_| "SchemasTable".to_string());
-            let region = env::var("AWS_REGION")
-                .unwrap_or_else(|_| "us-west-2".to_string());
+            let table_name = env::var("SCHEMAS_TABLE").unwrap_or_else(|_| {
+                tracing::warn!("SCHEMAS_TABLE env var not set, falling back to 'SchemasTable'");
+                "SchemasTable".to_string()
+            });
+            let region = env::var("AWS_REGION").unwrap_or_else(|_| {
+                tracing::warn!("AWS_REGION env var not set, falling back to 'us-west-2'");
+                "us-west-2".to_string()
+            });
 
             tracing::info!("Initializing schema service with table: {} in region: {}", table_name, region);
 
@@ -74,6 +79,19 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
         .cloned()
 }
 
+/// Get a schema by name — shared handler for both /api/schema/{name} and /api/schemas/{name}
+fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<Response<Body>, Error> {
+    match state.get_schema_by_name(schema_name) {
+        Ok(Some(schema)) => {
+            let body = serde_json::to_value(schema)
+                .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
+            json_response(200, body)
+        }
+        Ok(None) => json_response(404, json!({"error": "Schema not found"})),
+        Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
+    }
+}
+
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     let state = get_or_init_state().await?;
 
@@ -108,34 +126,47 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             }
         }
 
-        // Get specific schema (singular path)
-        (method, path) if method == "GET" && path.starts_with("/api/schema/") => {
-            let schema_name = path.trim_start_matches("/api/schema/");
-            match state.get_schema_by_name(schema_name) {
-                Ok(Some(schema)) => {
-                    let body = serde_json::to_value(schema)
+        // Find similar schemas
+        (method, path) if method == "GET" && path.starts_with("/api/schemas/similar/") => {
+            let schema_name = path.trim_start_matches("/api/schemas/similar/");
+            let threshold: f64 = event
+                .uri()
+                .query()
+                .and_then(|q| {
+                    q.split('&')
+                        .find_map(|param| param.strip_prefix("threshold="))
+                        .and_then(|v| v.parse().ok())
+                })
+                .unwrap_or(0.5);
+
+            if !(0.0..=1.0).contains(&threshold) {
+                return json_response(400, json!({"error": "Threshold must be between 0.0 and 1.0"}));
+            }
+
+            match state.find_similar_schemas(schema_name, threshold) {
+                Ok(response) => {
+                    let body = serde_json::to_value(response)
                         .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
                     json_response(200, body)
                 }
-                Ok(None) => json_response(404, json!({"error": "Schema not found"})),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
+                Err(e) => {
+                    let error_msg = format!("{}", e);
+                    if error_msg.contains("not found") {
+                        json_response(404, json!({"error": format!("Schema '{}' not found", schema_name)}))
+                    } else {
+                        json_response(500, json!({"error": format!("Failed to find similar schemas: {}", e)}))
+                    }
+                }
             }
         }
 
-        // Get specific schema (plural path variant)
-        // Note: /api/schemas/available is matched by the earlier exact arm,
-        // so this only matches actual schema name lookups
-        (method, path) if method == "GET" && path.starts_with("/api/schemas/") => {
-            let schema_name = path.trim_start_matches("/api/schemas/");
-            match state.get_schema_by_name(schema_name) {
-                Ok(Some(schema)) => {
-                    let body = serde_json::to_value(schema)
-                        .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
-                    json_response(200, body)
-                }
-                Ok(None) => json_response(404, json!({"error": "Schema not found"})),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
-            }
+        // Get specific schema (singular /api/schema/{name} or plural /api/schemas/{name})
+        (method, path) if method == "GET" && (path.starts_with("/api/schema/") || path.starts_with("/api/schemas/")) => {
+            let schema_name = path
+                .strip_prefix("/api/schemas/")
+                .or_else(|| path.strip_prefix("/api/schema/"))
+                .unwrap_or("");
+            get_schema_by_name(&state, schema_name)
         }
 
         // Add schema (POST)
@@ -168,16 +199,22 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                 }
             };
 
-            let mutation_mappers = request.get("mutation_mappers")
-                .and_then(|m| serde_json::from_value(m.clone()).ok())
-                .unwrap_or_default();
+            let mutation_mappers = match request.get("mutation_mappers") {
+                Some(m) => match serde_json::from_value(m.clone()) {
+                    Ok(mappers) => mappers,
+                    Err(e) => {
+                        tracing::warn!("Failed to parse mutation_mappers, using empty: {}", e);
+                        HashMap::new()
+                    }
+                },
+                None => HashMap::new(),
+            };
 
             match state.add_schema(schema, mutation_mappers).await {
                 Ok(outcome) => {
-                    json_response(200, json!({
-                        "ok": true,
-                        "outcome": format!("{:?}", outcome)
-                    }))
+                    let body = serde_json::to_value(&outcome)
+                        .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
+                    json_response(200, body)
                 }
                 Err(e) => json_response(500, json!({"error": format!("Failed to add schema: {}", e)})),
             }
@@ -207,7 +244,8 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                     "GET /health": "Health check",
                     "GET /api/schemas": "List schema names",
                     "GET /api/schemas/available": "Get all schemas with definitions",
-                    "GET /api/schema/{name}": "Get specific schema",
+                    "GET /api/schemas/similar/{name}?threshold=0.5": "Find similar schemas",
+                    "GET /api/schema/{name}": "Get specific schema (also: /api/schemas/{name})",
                     "POST /api/schemas": "Add new schema",
                     "POST /api/schemas/reload": "Reload schemas from storage"
                 }
