@@ -1,7 +1,9 @@
 {
-  "SchemaServiceStack-dev": {
-    "SchemaServiceFunctionName": "SchemaServiceStack-dev-SchemaServiceFnDF75D4BE-zkQrXKDzPgY3",
-    "SchemasTableName": "SchemaServiceStack-dev-SchemasTable1DC069C3-80LG5Y2KTHYQ",
-    "SchemaServiceApiUrl": "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+  "SchemaServiceStack-prod": {
+    "SchemaServiceDomainTarget": "d-qfws5xogl6.execute-api.us-east-1.amazonaws.com",
+    "SchemaServiceFunctionName": "SchemaServiceStack-prod-SchemaServiceFnDF75D4BE-58KcDYig68xw",
+    "SchemasTableName": "SchemaServiceStack-prod-SchemasTable1DC069C3-1N7DRM36UYX9L",
+    "SchemaServiceApiUrl": "https://axo709qs11.execute-api.us-east-1.amazonaws.com",
+    "SchemaServiceDomain": "schema.folddb.com"
   }
 }

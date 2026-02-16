@@ -3,7 +3,7 @@
 //! This Lambda function provides the global schema registry for FoldDB.
 //! It exposes the schema_service from fold_db as an HTTP API via API Gateway.
 
-use fold_db::schema_service::server::SchemaServiceState;
+use fold_db::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
 use fold_db::storage::{CloudConfig, ExplicitTables};
 
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
@@ -62,6 +62,7 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
                     native_index: String::new(),
                     process: String::new(),
                     logs: String::new(),
+                    idempotency: String::new(),
                 },
                 auto_create: true,
                 user_id: Some("__system__".to_string()), // Global registry
@@ -211,10 +212,18 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             };
 
             match state.add_schema(schema, mutation_mappers).await {
-                Ok(outcome) => {
-                    let body = serde_json::to_value(&outcome)
-                        .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
-                    json_response(200, body)
+                Ok(SchemaAddOutcome::Added(schema, mutation_mappers)) => {
+                    json_response(201, json!({
+                        "schema": schema,
+                        "mutation_mappers": mutation_mappers,
+                    }))
+                }
+                Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
+                    json_response(409, json!({
+                        "error": "Schema too similar to existing schema",
+                        "similarity": conflict.similarity,
+                        "closest_schema": conflict.closest_schema,
+                    }))
                 }
                 Err(e) => json_response(500, json!({"error": format!("Failed to add schema: {}", e)})),
             }
