@@ -218,6 +218,12 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                         "mutation_mappers": mutation_mappers,
                     }))
                 }
+                Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+                    json_response(200, json!({
+                        "schema": schema,
+                        "mutation_mappers": {},
+                    }))
+                }
                 Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
                     json_response(409, json!({
                         "error": "Schema too similar to existing schema",
