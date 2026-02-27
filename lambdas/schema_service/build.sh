@@ -13,7 +13,7 @@ echo "Building schema_service Lambda (profile: $PROFILE)..."
 if [ "$PROFILE" = "release" ]; then
     cargo lambda build --release --output-format zip --target x86_64-unknown-linux-gnu
 else
-    cargo lambda build --profile dev-release --output-format zip --target x86_64-unknown-linux-gnu
+    cargo lambda build --profile "$PROFILE" --output-format zip --target x86_64-unknown-linux-gnu
 fi
 
 # Create the extracted directory expected by CDK
