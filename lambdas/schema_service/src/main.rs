@@ -5,9 +5,9 @@
 //! Supports both schema and view registration endpoints.
 
 #[cfg(not(test))]
-use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
+use fold_db::schema_service::state::SchemaServiceState;
 #[cfg(not(test))]
-use fold_db_node::schema_service::types::{AddViewRequest, ViewAddOutcome};
+use fold_db::schema_service::types::{AddViewRequest, SchemaAddOutcome, ViewAddOutcome};
 #[cfg(not(test))]
 use fold_db::storage::{CloudConfig, ExplicitTables};
 
