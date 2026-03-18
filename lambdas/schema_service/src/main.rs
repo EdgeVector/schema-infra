@@ -4,8 +4,11 @@
 //! It exposes the schema_service from fold_db_node as an HTTP API via API Gateway.
 //! Supports both schema and view registration endpoints.
 
+#[cfg(not(test))]
 use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
+#[cfg(not(test))]
 use fold_db_node::schema_service::types::{AddViewRequest, ViewAddOutcome};
+#[cfg(not(test))]
 use fold_db::storage::{CloudConfig, ExplicitTables};
 
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
@@ -17,6 +20,7 @@ use tokio::sync::OnceCell;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // Global singleton for Lambda warm starts
+#[cfg(not(test))]
 static SCHEMA_STATE: OnceCell<Arc<SchemaServiceState>> = OnceCell::const_new();
 
 /// Build a JSON response with CORS headers
@@ -32,6 +36,7 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
 }
 
 /// Initialize the schema service state (once per cold start)
+#[cfg(not(test))]
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
     SCHEMA_STATE
         .get_or_try_init(|| async {
@@ -80,6 +85,7 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
 }
 
 /// Get a schema by name — shared handler for both /api/schema/{name} and /api/schemas/{name}
+#[cfg(not(test))]
 fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<Response<Body>, Error> {
     match state.get_schema_by_name(schema_name) {
         Ok(Some(schema)) => {
@@ -93,6 +99,7 @@ fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<R
 }
 
 /// Get a view by name
+#[cfg(not(test))]
 fn get_view_by_name(state: &SchemaServiceState, view_name: &str) -> Result<Response<Body>, Error> {
     match state.get_view_by_name(view_name) {
         Ok(Some(view)) => {
