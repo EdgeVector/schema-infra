@@ -312,6 +312,14 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             get_view_by_name(&state, view_name)
         }
 
+        // TODO: Transform Registry — when a view with a WASM transform is registered,
+        // run automated classification downgrading tests. Compare the output schema's
+        // field classifications against the input schema's classifications to determine
+        // if the transform reduces data sensitivity (e.g., PII → aggregated stats).
+        // See docs/classification_downgrading_white_paper.pdf for the formal model.
+        // This enables transforms to be auto-approved when they provably downgrade
+        // classification, and flagged for manual review when they don't.
+
         // Register a view (POST)
         ("POST", "/api/views") => {
             let body = match parse_body(&event) {
