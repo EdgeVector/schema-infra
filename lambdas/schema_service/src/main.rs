@@ -1,20 +1,35 @@
 //! Schema Service Lambda handler
 //!
 //! This Lambda function provides the global schema registry for FoldDB.
-//! It exposes the schema_service from fold_db as an HTTP API via API Gateway.
+//! It exposes the schema_service from fold_db_node as an HTTP API via API Gateway.
+//! Supports both schema and view registration endpoints.
 
-use fold_db::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
+#[cfg(not(test))]
+use fold_db::schema_service::state::SchemaServiceState;
+#[cfg(not(test))]
+use fold_db::schema_service::types::{AddViewRequest, SchemaAddOutcome, ViewAddOutcome};
+#[cfg(not(test))]
 use fold_db::storage::{CloudConfig, ExplicitTables};
 
-use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use lambda_http::{Body, Error, Response};
+#[cfg(not(test))]
+use lambda_http::Request;
+#[cfg(not(test))]
+use lambda_http::{run, service_fn};
 use serde_json::{json, Value};
+#[cfg(not(test))]
 use std::collections::HashMap;
+#[cfg(not(test))]
 use std::env;
+#[cfg(not(test))]
 use std::sync::Arc;
+#[cfg(not(test))]
 use tokio::sync::OnceCell;
+#[cfg(not(test))]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // Global singleton for Lambda warm starts
+#[cfg(not(test))]
 static SCHEMA_STATE: OnceCell<Arc<SchemaServiceState>> = OnceCell::const_new();
 
 /// Build a JSON response with CORS headers
@@ -30,6 +45,7 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
 }
 
 /// Initialize the schema service state (once per cold start)
+#[cfg(not(test))]
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
     SCHEMA_STATE
         .get_or_try_init(|| async {
@@ -54,11 +70,8 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
                     main: String::new(),
                     metadata: String::new(),
                     permissions: String::new(),
-                    transforms: String::new(),
-                    orchestrator: String::new(),
                     schema_states: String::new(),
                     public_keys: String::new(),
-                    transform_queue: String::new(),
                     native_index: String::new(),
                     process: String::new(),
                     logs: String::new(),
@@ -81,6 +94,7 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
 }
 
 /// Get a schema by name — shared handler for both /api/schema/{name} and /api/schemas/{name}
+#[cfg(not(test))]
 fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<Response<Body>, Error> {
     match state.get_schema_by_name(schema_name) {
         Ok(Some(schema)) => {
@@ -93,6 +107,31 @@ fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<R
     }
 }
 
+/// Get a view by name
+#[cfg(not(test))]
+fn get_view_by_name(state: &SchemaServiceState, view_name: &str) -> Result<Response<Body>, Error> {
+    match state.get_view_by_name(view_name) {
+        Ok(Some(view)) => {
+            let body = serde_json::to_value(view)
+                .map_err(|e| Error::from(format!("Serialization error: {}", e)))?;
+            json_response(200, body)
+        }
+        Ok(None) => json_response(404, json!({"error": "View not found"})),
+        Err(e) => json_response(500, json!({"error": format!("Failed to get view: {}", e)})),
+    }
+}
+
+/// Parse the request body as a string
+#[cfg(not(test))]
+fn parse_body(event: &Request) -> Result<String, Response<Body>> {
+    match event.body() {
+        Body::Text(s) => Ok(s.clone()),
+        Body::Binary(b) => Ok(String::from_utf8_lossy(b).to_string()),
+        Body::Empty => Err(json_response(400, json!({"error": "Request body is empty"})).unwrap()),
+    }
+}
+
+#[cfg(not(test))]
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     let state = get_or_init_state().await?;
 
@@ -110,6 +149,8 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                 "service": "schema-service"
             }))
         }
+
+        // ============== Schema Endpoints ==============
 
         // List schema names
         ("GET", "/api/schemas") => {
@@ -172,12 +213,9 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
 
         // Add schema (POST)
         ("POST", "/api/schemas") => {
-            let body = match event.body() {
-                Body::Text(s) => s.clone(),
-                Body::Binary(b) => String::from_utf8_lossy(b).to_string(),
-                Body::Empty => {
-                    return json_response(400, json!({"error": "Request body is empty"}));
-                }
+            let body = match parse_body(&event) {
+                Ok(b) => b,
+                Err(r) => return Ok(r),
             };
 
             let request: Value = match serde_json::from_str(&body) {
@@ -218,20 +256,20 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                         "mutation_mappers": mutation_mappers,
                     }))
                 }
-                Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+                Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => {
                     json_response(200, json!({
                         "schema": schema,
-                        "mutation_mappers": {},
+                        "mutation_mappers": mutation_mappers,
                     }))
                 }
-                Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-                    json_response(409, json!({
-                        "error": "Schema too similar to existing schema",
-                        "similarity": conflict.similarity,
-                        "closest_schema": conflict.closest_schema,
+                Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
+                    json_response(201, json!({
+                        "schema": schema,
+                        "mutation_mappers": mutation_mappers,
+                        "replaced_schema": old_name,
                     }))
                 }
-                Err(e) => json_response(500, json!({"error": format!("Failed to add schema: {}", e)})),
+                Err(e) => json_response(400, json!({"error": format!("Failed to add schema: {}", e)})),
             }
         }
 
@@ -250,19 +288,91 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             }
         }
 
+        // ============== View Endpoints ==============
+
+        // List view names
+        ("GET", "/api/views") => {
+            match state.get_view_names() {
+                Ok(names) => json_response(200, json!({ "views": names })),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get view names: {}", e)})),
+            }
+        }
+
+        // Get all views with definitions
+        ("GET", "/api/views/available") => {
+            match state.get_all_views() {
+                Ok(views) => json_response(200, json!({ "views": views })),
+                Err(e) => json_response(500, json!({"error": format!("Failed to get views: {}", e)})),
+            }
+        }
+
+        // Get specific view
+        (method, path) if method == "GET" && path.starts_with("/api/view/") => {
+            let view_name = path.trim_start_matches("/api/view/");
+            get_view_by_name(&state, view_name)
+        }
+
+        // Register a view (POST)
+        ("POST", "/api/views") => {
+            let body = match parse_body(&event) {
+                Ok(b) => b,
+                Err(r) => return Ok(r),
+            };
+
+            let request: AddViewRequest = match serde_json::from_str(&body) {
+                Ok(r) => r,
+                Err(e) => {
+                    return json_response(400, json!({"error": format!("Invalid view request: {}", e)}));
+                }
+            };
+
+            let view_name = request.name.clone();
+            match state.add_view(request).await {
+                Ok(ViewAddOutcome::Added(view, schema)) => {
+                    json_response(201, json!({
+                        "view": view,
+                        "output_schema": schema,
+                    }))
+                }
+                Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => {
+                    json_response(200, json!({
+                        "view": view,
+                        "output_schema": schema,
+                    }))
+                }
+                Ok(ViewAddOutcome::Expanded(view, schema, old_name)) => {
+                    json_response(201, json!({
+                        "view": view,
+                        "output_schema": schema,
+                        "replaced_schema": old_name,
+                    }))
+                }
+                Err(e) => {
+                    tracing::error!("Failed to register view '{}': {}", view_name, e);
+                    json_response(400, json!({"error": format!("Failed to register view: {}", e)}))
+                }
+            }
+        }
+
+        // ============== Root & Fallback ==============
+
         // Root endpoint
         ("GET", "/") | ("POST", "/") => {
             json_response(200, json!({
-                "service": "FoldDB Schema Registry",
-                "version": "1.0.0",
+                "service": "FoldDB Schema & View Registry",
+                "version": "2.0.0",
                 "endpoints": {
                     "GET /health": "Health check",
                     "GET /api/schemas": "List schema names",
                     "GET /api/schemas/available": "Get all schemas with definitions",
                     "GET /api/schemas/similar/{name}?threshold=0.5": "Find similar schemas",
-                    "GET /api/schema/{name}": "Get specific schema (also: /api/schemas/{name})",
+                    "GET /api/schema/{name}": "Get specific schema",
                     "POST /api/schemas": "Add new schema",
-                    "POST /api/schemas/reload": "Reload schemas from storage"
+                    "POST /api/schemas/reload": "Reload schemas from storage",
+                    "GET /api/views": "List view names",
+                    "GET /api/views/available": "Get all views with definitions",
+                    "GET /api/view/{name}": "Get specific view",
+                    "POST /api/views": "Register a new view"
                 }
             }))
         }
@@ -331,6 +441,7 @@ mod tests {
     }
 }
 
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Initialize tracing with JSON formatting for CloudWatch

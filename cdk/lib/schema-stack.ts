@@ -66,7 +66,7 @@ export class SchemaServiceStack extends Stack {
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
-          apigwv2.CorsHttpMethod.OPTIONS,
+          apigwv2.CorsHttpMethod.OPTIONS
         ],
         allowHeaders: ["Content-Type", "Authorization"],
         maxAge: Duration.days(1),
@@ -144,6 +144,34 @@ export class SchemaServiceStack extends Stack {
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "SchemaGetSingularIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    // View endpoints
+    httpApi.addRoutes({
+      path: "/api/views",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "ViewListIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/api/views/available",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "ViewAvailableIntegration",
+        schemaServiceFn,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/api/view/{viewId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "ViewGetIntegration",
         schemaServiceFn,
       ),
     });

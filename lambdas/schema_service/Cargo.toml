@@ -8,7 +8,7 @@ name = "schema_service"
 path = "src/main.rs"
 
 [dependencies]
-# FoldDB core library (contains schema service implementation)
+# FoldDB core library (storage backends, types, schema service)
 fold_db = { path = "../../../fold_db", features = ["aws-backend"] }
 
 # AWS Lambda runtime
