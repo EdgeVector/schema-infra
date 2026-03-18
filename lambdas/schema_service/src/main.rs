@@ -11,12 +11,21 @@ use fold_db::schema_service::types::{AddViewRequest, SchemaAddOutcome, ViewAddOu
 #[cfg(not(test))]
 use fold_db::storage::{CloudConfig, ExplicitTables};
 
-use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use lambda_http::{Body, Error, Response};
+#[cfg(not(test))]
+use lambda_http::Request;
+#[cfg(not(test))]
+use lambda_http::{run, service_fn};
 use serde_json::{json, Value};
+#[cfg(not(test))]
 use std::collections::HashMap;
+#[cfg(not(test))]
 use std::env;
+#[cfg(not(test))]
 use std::sync::Arc;
+#[cfg(not(test))]
 use tokio::sync::OnceCell;
+#[cfg(not(test))]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // Global singleton for Lambda warm starts
@@ -113,6 +122,7 @@ fn get_view_by_name(state: &SchemaServiceState, view_name: &str) -> Result<Respo
 }
 
 /// Parse the request body as a string
+#[cfg(not(test))]
 fn parse_body(event: &Request) -> Result<String, Response<Body>> {
     match event.body() {
         Body::Text(s) => Ok(s.clone()),
@@ -121,6 +131,7 @@ fn parse_body(event: &Request) -> Result<String, Response<Body>> {
     }
 }
 
+#[cfg(not(test))]
 async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     let state = get_or_init_state().await?;
 
@@ -430,6 +441,7 @@ mod tests {
     }
 }
 
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Initialize tracing with JSON formatting for CloudWatch
