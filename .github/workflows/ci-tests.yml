@@ -28,7 +28,7 @@ jobs:
         run: |
           # Cargo.toml references fold_db_node at ../../../fold_db_node
           # fold_db_node is private — requires REPO_ACCESS_TOKEN secret with repo scope
-          git clone --depth 1 https://x-access-token:${{ secrets.REPO_ACCESS_TOKEN }}@github.com/shiba4life/fold_db_node.git "$GITHUB_WORKSPACE/../fold_db_node"
+          git clone --depth 1 https://x-access-token:${{ secrets.GPAT }}@github.com/shiba4life/fold_db_node.git "$GITHUB_WORKSPACE/../fold_db_node"
           # Create empty dist dir for RustEmbed
           mkdir -p "$GITHUB_WORKSPACE/../fold_db_node/src/server/static-react/dist"
           touch "$GITHUB_WORKSPACE/../fold_db_node/src/server/static-react/dist/index.html"
