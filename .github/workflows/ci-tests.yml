@@ -27,7 +27,8 @@ jobs:
       - name: Clone fold_db_node dependency
         run: |
           # Cargo.toml references fold_db_node at ../../../fold_db_node
-          git clone --depth 1 --branch feature/view-service https://github.com/shiba4life/fold_db_node.git "$GITHUB_WORKSPACE/../fold_db_node"
+          # fold_db_node is private, so use the GitHub token for auth
+          git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/shiba4life/fold_db_node.git "$GITHUB_WORKSPACE/../fold_db_node"
           # Create empty dist dir for RustEmbed
           mkdir -p "$GITHUB_WORKSPACE/../fold_db_node/src/server/static-react/dist"
           touch "$GITHUB_WORKSPACE/../fold_db_node/src/server/static-react/dist/index.html"
