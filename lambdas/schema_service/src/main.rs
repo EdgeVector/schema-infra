@@ -67,13 +67,15 @@ async fn resolve_secret_to_env(secret_arn: &str, env_var: &str) -> Result<(), Er
 /// Initialize the schema service state (once per cold start)
 #[cfg(not(test))]
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
+    // Resolve secrets before entering OnceCell (aws_sdk clients aren't Send)
+    if env::var("ANTHROPIC_API_KEY").is_err() {
+        if let Ok(arn) = env::var("ANTHROPIC_API_KEY_SECRET_ARN") {
+            resolve_secret_to_env(&arn, "ANTHROPIC_API_KEY").await?;
+        }
+    }
+
     SCHEMA_STATE
         .get_or_try_init(|| async {
-            // Resolve ANTHROPIC_API_KEY from Secrets Manager if ARN is provided
-            if let Ok(arn) = env::var("ANTHROPIC_API_KEY_SECRET_ARN") {
-                resolve_secret_to_env(&arn, "ANTHROPIC_API_KEY").await?;
-            }
-
             let table_name = env::var("SCHEMAS_TABLE").unwrap_or_else(|_| {
                 tracing::warn!("SCHEMAS_TABLE env var not set, falling back to 'SchemasTable'");
                 "SchemasTable".to_string()
