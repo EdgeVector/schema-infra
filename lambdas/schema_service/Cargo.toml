@@ -16,6 +16,10 @@ lambda_http = "0.13"
 lambda_runtime = "0.13"
 tokio = { version = "1", features = ["full"] }
 
+# AWS SDK (Secrets Manager for API key resolution)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-secretsmanager = "1"
+
 # Serialization
 serde_json = "1.0"
 

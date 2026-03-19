@@ -44,11 +44,36 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
         .map_err(|e| Error::from(format!("Failed to build response: {}", e)))
 }
 
+/// Resolve a Secrets Manager ARN to its plaintext value and set it as an env var.
+/// This lets downstream code (classify.rs) read ANTHROPIC_API_KEY from env as usual.
+#[cfg(not(test))]
+async fn resolve_secret_to_env(secret_arn: &str, env_var: &str) -> Result<(), Error> {
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let client = aws_sdk_secretsmanager::Client::new(&config);
+    let result = client
+        .get_secret_value()
+        .secret_id(secret_arn)
+        .send()
+        .await
+        .map_err(|e| Error::from(format!("Failed to fetch secret {}: {}", env_var, e)))?;
+    let value = result
+        .secret_string()
+        .ok_or_else(|| Error::from(format!("Secret {} has no string value", env_var)))?;
+    env::set_var(env_var, value);
+    tracing::info!("Resolved {} from Secrets Manager", env_var);
+    Ok(())
+}
+
 /// Initialize the schema service state (once per cold start)
 #[cfg(not(test))]
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
     SCHEMA_STATE
         .get_or_try_init(|| async {
+            // Resolve ANTHROPIC_API_KEY from Secrets Manager if ARN is provided
+            if let Ok(arn) = env::var("ANTHROPIC_API_KEY_SECRET_ARN") {
+                resolve_secret_to_env(&arn, "ANTHROPIC_API_KEY").await?;
+            }
+
             let table_name = env::var("SCHEMAS_TABLE").unwrap_or_else(|_| {
                 tracing::warn!("SCHEMAS_TABLE env var not set, falling back to 'SchemasTable'");
                 "SchemasTable".to_string()
