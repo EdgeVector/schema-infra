@@ -11,6 +11,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 
 export interface SchemaServiceStackProps extends StackProps {
   environment?: string; // 'dev' or 'prod'
@@ -37,6 +38,15 @@ export class SchemaServiceStack extends Stack {
     });
 
     // =====================================================
+    // Secrets
+    // =====================================================
+    const anthropicApiKey = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "AnthropicApiKey",
+      `SchemaServiceAnthropicApiKey-${envName}`,
+    );
+
+    // =====================================================
     // Schema Service Lambda Function
     // =====================================================
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
@@ -50,8 +60,12 @@ export class SchemaServiceStack extends Stack {
       environment: {
         SCHEMAS_TABLE: schemasTable.tableName,
         RUST_LOG: "info",
+        ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
       },
     });
+
+    // Grant Lambda access to Anthropic API key secret
+    anthropicApiKey.grantRead(schemaServiceFn);
 
     // Grant Lambda access to DynamoDB
     schemasTable.grantReadWriteData(schemaServiceFn);

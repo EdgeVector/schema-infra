@@ -44,9 +44,36 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
         .map_err(|e| Error::from(format!("Failed to build response: {}", e)))
 }
 
+/// Resolve a Secrets Manager ARN to its plaintext value and set it as an env var.
+/// This lets downstream code (classify.rs) read ANTHROPIC_API_KEY from env as usual.
+#[cfg(not(test))]
+async fn resolve_secret_to_env(secret_arn: &str, env_var: &str) -> Result<(), Error> {
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let client = aws_sdk_secretsmanager::Client::new(&config);
+    let result = client
+        .get_secret_value()
+        .secret_id(secret_arn)
+        .send()
+        .await
+        .map_err(|e| Error::from(format!("Failed to fetch secret {}: {}", env_var, e)))?;
+    let value = result
+        .secret_string()
+        .ok_or_else(|| Error::from(format!("Secret {} has no string value", env_var)))?;
+    env::set_var(env_var, value);
+    tracing::info!("Resolved {} from Secrets Manager", env_var);
+    Ok(())
+}
+
 /// Initialize the schema service state (once per cold start)
 #[cfg(not(test))]
 async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
+    // Resolve secrets before entering OnceCell (aws_sdk clients aren't Send)
+    if env::var("ANTHROPIC_API_KEY").is_err() {
+        if let Ok(arn) = env::var("ANTHROPIC_API_KEY_SECRET_ARN") {
+            resolve_secret_to_env(&arn, "ANTHROPIC_API_KEY").await?;
+        }
+    }
+
     SCHEMA_STATE
         .get_or_try_init(|| async {
             let table_name = env::var("SCHEMAS_TABLE").unwrap_or_else(|_| {
@@ -311,6 +338,14 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             let view_name = path.trim_start_matches("/api/view/");
             get_view_by_name(&state, view_name)
         }
+
+        // TODO: Transform Registry — when a view with a WASM transform is registered,
+        // run automated classification downgrading tests. Compare the output schema's
+        // field classifications against the input schema's classifications to determine
+        // if the transform reduces data sensitivity (e.g., PII → aggregated stats).
+        // See docs/classification_downgrading_white_paper.pdf for the formal model.
+        // This enables transforms to be auto-approved when they provably downgrade
+        // classification, and flagged for manual review when they don't.
 
         // Register a view (POST)
         ("POST", "/api/views") => {

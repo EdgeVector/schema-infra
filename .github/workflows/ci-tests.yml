@@ -20,7 +20,7 @@ jobs:
           # Cargo.toml references fold_db at ../../../fold_db (relative to lambdas/schema_service/)
           # In CI: workspace is /home/runner/work/schema-infra/schema-infra
           # So ../../../fold_db = /home/runner/work/schema-infra/fold_db
-          git clone --depth 1 --branch feature/schema-service-module https://github.com/shiba4life/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
+          git clone --depth 1 --branch mainline https://github.com/shiba4life/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
           # Create empty dist dir for RustEmbed (schema_service doesn't need the frontend)
           mkdir -p "$GITHUB_WORKSPACE/../fold_db/src/server/static-react/dist"
 

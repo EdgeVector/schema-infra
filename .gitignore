@@ -30,3 +30,7 @@ Thumbs.db
 # Lambda build artifacts
 *.zip
 bootstrap
+
+# Docker build caches
+.docker-cargo/
+.docker-rustup/
