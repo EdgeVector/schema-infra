@@ -44,6 +44,8 @@ docker run --rm \
         export PATH="/build/schema-infra/lambdas/schema_service/.docker-cargo/bin:$PATH"
         cargo install cargo-lambda 2>&1 | tail -1
         cargo lambda build --profile '"$PROFILE"' --output-format zip --compiler cargo
+        # Fix permissions so host user can access build artifacts
+        chmod -R a+rwX target/lambda/ 2>/dev/null || true
     '
 
 # Create the extracted directory expected by CDK
