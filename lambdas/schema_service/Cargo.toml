@@ -8,8 +8,14 @@ name = "schema_service"
 path = "src/main.rs"
 
 [dependencies]
-# FoldDB core library (storage backends, types, schema service)
-fold_db = { path = "../../../fold_db", features = ["aws-backend"] }
+# FoldDB core library (types, schema service state).
+# Note: the DynamoDB backend (aws-backend feature) was removed from
+# fold_db in #494. The schema service state is now Sled-only. For
+# Lambda deployment, the Sled directory must be backed by a
+# persistent filesystem (EFS recommended). The Lambda's own AWS
+# dependencies (aws-config, aws-sdk-secretsmanager) are listed
+# below and are unrelated to fold_db's storage layer.
+fold_db = { path = "../../../fold_db" }
 
 # AWS Lambda runtime
 lambda_http = "0.13"

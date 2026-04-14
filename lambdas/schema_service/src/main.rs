@@ -1,21 +1,30 @@
 //! Schema Service Lambda handler
 //!
 //! This Lambda function provides the global schema registry for FoldDB.
-//! It exposes the schema_service from fold_db_node as an HTTP API via API Gateway.
-//! Supports both schema and view registration endpoints.
+//! It wraps `fold_db::schema_service::state::SchemaServiceState` as an
+//! HTTP API via API Gateway. Supports both schema and view registration
+//! endpoints.
+//!
+//! Storage: Sled-only after fold_db#494 removed DynamoDB. The Lambda
+//! expects SCHEMA_DB_PATH to point at a writable directory; production
+//! must back this with EFS for persistence across cold starts.
+
+// The `lambda_http::Error` type wraps a boxed error that Clippy's
+// result_large_err lint flags. The whole Lambda uses this error
+// consistently; rewriting every handler to box-on-return would be
+// substantial churn without behavior benefit.
+#![allow(clippy::result_large_err)]
 
 #[cfg(not(test))]
 use fold_db::schema_service::state::SchemaServiceState;
 #[cfg(not(test))]
 use fold_db::schema_service::types::{AddViewRequest, SchemaAddOutcome, ViewAddOutcome};
-#[cfg(not(test))]
-use fold_db::storage::{CloudConfig, ExplicitTables};
 
-use lambda_http::{Body, Error, Response};
 #[cfg(not(test))]
 use lambda_http::Request;
 #[cfg(not(test))]
 use lambda_http::{run, service_fn};
+use lambda_http::{Body, Error, Response};
 use serde_json::{json, Value};
 #[cfg(not(test))]
 use std::collections::HashMap;
@@ -39,7 +48,10 @@ fn json_response(status: u16, body: Value) -> Result<Response<Body>, Error> {
         .header("Content-Type", "application/json")
         .header("Access-Control-Allow-Origin", "*")
         .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        .header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization",
+        )
         .body(Body::from(body.to_string()))
         .map_err(|e| Error::from(format!("Failed to build response: {}", e)))
 }
@@ -76,44 +88,65 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
 
     SCHEMA_STATE
         .get_or_try_init(|| async {
-            let table_name = env::var("SCHEMAS_TABLE").unwrap_or_else(|_| {
-                tracing::warn!("SCHEMAS_TABLE env var not set, falling back to 'SchemasTable'");
-                "SchemasTable".to_string()
-            });
-            let region = env::var("AWS_REGION").unwrap_or_else(|_| {
-                tracing::warn!("AWS_REGION env var not set, falling back to 'us-west-2'");
-                "us-west-2".to_string()
-            });
+            // The schema service is Sled-only after fold_db#494 removed
+            // the DynamoDB backend. SCHEMA_DB_PATH tells this Lambda
+            // where to open the Sled directory. For persistent
+            // production state the CDK stack MUST mount EFS at this
+            // path; otherwise the state is ephemeral per cold start
+            // and user-proposed schemas are lost (built-in schemas
+            // would still be re-seeded every cold start, but user
+            // content would not survive).
+            //
+            // Default: /mnt/schema (the expected EFS mount point).
+            // Override with SCHEMA_DB_PATH=/tmp/schema for ephemeral
+            // testing in non-production Lambdas.
+            let db_path = env::var("SCHEMA_DB_PATH").unwrap_or_else(|_| "/mnt/schema".to_string());
 
-            tracing::info!("Initializing schema service with table: {} in region: {}", table_name, region);
+            tracing::info!(
+                "Initializing schema service with Sled storage at: {}",
+                db_path
+            );
 
-            // Create CloudConfig for the global schema registry
-            // Use __system__ as the user_id for global schemas
-            let config = CloudConfig {
-                region,
-                tables: ExplicitTables {
-                    schemas: table_name,
-                    // Other tables not used by schema service, but required by struct
-                    main: String::new(),
-                    metadata: String::new(),
-                    permissions: String::new(),
-                    schema_states: String::new(),
-                    public_keys: String::new(),
-                    native_index: String::new(),
-                    process: String::new(),
-                    logs: String::new(),
-                    idempotency: String::new(),
-                },
-                auto_create: true,
-                user_id: Some("__system__".to_string()), // Global registry
-                file_storage_bucket: None,
-            };
+            let state = SchemaServiceState::new(db_path.clone()).map_err(|e| {
+                Error::from(format!(
+                    "Failed to initialize schema service at '{}': {}. \
+                     Ensure SCHEMA_DB_PATH points at a writable directory \
+                     (production: EFS-backed; dev: any local path).",
+                    db_path, e
+                ))
+            })?;
 
-            let state = SchemaServiceState::new_with_cloud(config)
+            // Seed the twelve Phase 1 built-in fingerprint schemas.
+            // These are system primitives (Fingerprint, Mention,
+            // Edge, Identity, IdentityReceipt, Persona, and the three
+            // junction + three support schemas). They must exist
+            // before any fold_db_node running the fingerprints
+            // subsystem can start, because the node fetches them by
+            // descriptive name at startup and refuses to boot if any
+            // are missing.
+            //
+            // Idempotent: schemas already present (from a previous
+            // cold start, past deploy, or legacy propose-based flows
+            // from fold_db_node versions before the schema-service-
+            // built-ins migration) are skipped by identity_hash match.
+            // Fails loudly on any real error so the Lambda cold-start
+            // crashes rather than serving requests against a half-
+            // seeded registry.
+            fold_db::schema_service::builtin_schemas::seed(&state)
                 .await
-                .map_err(|e| Error::from(format!("Failed to initialize schema service: {}", e)))?;
+                .map_err(|e| {
+                    Error::from(format!(
+                        "Failed to seed Phase 1 built-in schemas: {}. \
+                     The Lambda cannot serve fingerprint-subsystem \
+                     requests without these.",
+                        e
+                    ))
+                })?;
 
-            tracing::info!("Schema service initialized successfully");
+            tracing::info!(
+                "Schema service initialized and built-ins seeded ({} descriptive names)",
+                fold_db::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES.len()
+            );
             Ok(Arc::new(state))
         })
         .await
@@ -122,7 +155,10 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
 
 /// Get a schema by name — shared handler for both /api/schema/{name} and /api/schemas/{name}
 #[cfg(not(test))]
-fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<Response<Body>, Error> {
+fn get_schema_by_name(
+    state: &SchemaServiceState,
+    schema_name: &str,
+) -> Result<Response<Body>, Error> {
     match state.get_schema_by_name(schema_name) {
         Ok(Some(schema)) => {
             let body = serde_json::to_value(schema)
@@ -130,7 +166,10 @@ fn get_schema_by_name(state: &SchemaServiceState, schema_name: &str) -> Result<R
             json_response(200, body)
         }
         Ok(None) => json_response(404, json!({"error": "Schema not found"})),
-        Err(e) => json_response(500, json!({"error": format!("Failed to get schema: {}", e)})),
+        Err(e) => json_response(
+            500,
+            json!({"error": format!("Failed to get schema: {}", e)}),
+        ),
     }
 }
 
@@ -170,30 +209,33 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     // Route handling based on path
     match (method, path) {
         // Health check
-        ("GET", "/health") | ("GET", "/api/health") => {
-            json_response(200, json!({
+        ("GET", "/health") | ("GET", "/api/health") => json_response(
+            200,
+            json!({
                 "status": "healthy",
                 "service": "schema-service"
-            }))
-        }
+            }),
+        ),
 
         // ============== Schema Endpoints ==============
 
         // List schema names
-        ("GET", "/api/schemas") => {
-            match state.get_schema_names() {
-                Ok(schema_names) => json_response(200, json!({ "schemas": schema_names })),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get schema names: {}", e)})),
-            }
-        }
+        ("GET", "/api/schemas") => match state.get_schema_names() {
+            Ok(schema_names) => json_response(200, json!({ "schemas": schema_names })),
+            Err(e) => json_response(
+                500,
+                json!({"error": format!("Failed to get schema names: {}", e)}),
+            ),
+        },
 
         // Get all schemas with definitions
-        ("GET", "/api/schemas/available") => {
-            match state.get_all_schemas_cached() {
-                Ok(schemas) => json_response(200, json!({ "schemas": schemas })),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get schemas: {}", e)})),
-            }
-        }
+        ("GET", "/api/schemas/available") => match state.get_all_schemas_cached() {
+            Ok(schemas) => json_response(200, json!({ "schemas": schemas })),
+            Err(e) => json_response(
+                500,
+                json!({"error": format!("Failed to get schemas: {}", e)}),
+            ),
+        },
 
         // Find similar schemas
         (method, path) if method == "GET" && path.starts_with("/api/schemas/similar/") => {
@@ -209,7 +251,10 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                 .unwrap_or(0.5);
 
             if !(0.0..=1.0).contains(&threshold) {
-                return json_response(400, json!({"error": "Threshold must be between 0.0 and 1.0"}));
+                return json_response(
+                    400,
+                    json!({"error": "Threshold must be between 0.0 and 1.0"}),
+                );
             }
 
             match state.find_similar_schemas(schema_name, threshold) {
@@ -221,16 +266,25 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                 Err(e) => {
                     let error_msg = format!("{}", e);
                     if error_msg.contains("not found") {
-                        json_response(404, json!({"error": format!("Schema '{}' not found", schema_name)}))
+                        json_response(
+                            404,
+                            json!({"error": format!("Schema '{}' not found", schema_name)}),
+                        )
                     } else {
-                        json_response(500, json!({"error": format!("Failed to find similar schemas: {}", e)}))
+                        json_response(
+                            500,
+                            json!({"error": format!("Failed to find similar schemas: {}", e)}),
+                        )
                     }
                 }
             }
         }
 
         // Get specific schema (singular /api/schema/{name} or plural /api/schemas/{name})
-        (method, path) if method == "GET" && (path.starts_with("/api/schema/") || path.starts_with("/api/schemas/")) => {
+        (method, path)
+            if method == "GET"
+                && (path.starts_with("/api/schema/") || path.starts_with("/api/schemas/")) =>
+        {
             let schema_name = path
                 .strip_prefix("/api/schemas/")
                 .or_else(|| path.strip_prefix("/api/schema/"))
@@ -257,7 +311,10 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                 Some(s) => match serde_json::from_value(s.clone()) {
                     Ok(schema) => schema,
                     Err(e) => {
-                        return json_response(400, json!({"error": format!("Invalid schema: {}", e)}));
+                        return json_response(
+                            400,
+                            json!({"error": format!("Invalid schema: {}", e)}),
+                        );
                     }
                 },
                 None => {
@@ -277,61 +334,69 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             };
 
             match state.add_schema(schema, mutation_mappers).await {
-                Ok(SchemaAddOutcome::Added(schema, mutation_mappers)) => {
-                    json_response(201, json!({
+                Ok(SchemaAddOutcome::Added(schema, mutation_mappers)) => json_response(
+                    201,
+                    json!({
                         "schema": schema,
                         "mutation_mappers": mutation_mappers,
-                    }))
-                }
-                Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => {
-                    json_response(200, json!({
+                    }),
+                ),
+                Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => json_response(
+                    200,
+                    json!({
                         "schema": schema,
                         "mutation_mappers": mutation_mappers,
-                    }))
-                }
+                    }),
+                ),
                 Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
-                    json_response(201, json!({
-                        "schema": schema,
-                        "mutation_mappers": mutation_mappers,
-                        "replaced_schema": old_name,
-                    }))
+                    json_response(
+                        201,
+                        json!({
+                            "schema": schema,
+                            "mutation_mappers": mutation_mappers,
+                            "replaced_schema": old_name,
+                        }),
+                    )
                 }
-                Err(e) => json_response(400, json!({"error": format!("Failed to add schema: {}", e)})),
+                Err(e) => json_response(
+                    400,
+                    json!({"error": format!("Failed to add schema: {}", e)}),
+                ),
             }
         }
 
         // Reload schemas
-        ("POST", "/api/schemas/reload") => {
-            match state.load_schemas().await {
-                Ok(_) => {
-                    let count = state.get_schema_count();
-                    json_response(200, json!({
+        ("POST", "/api/schemas/reload") => match state.load_schemas().await {
+            Ok(_) => {
+                let count = state.get_schema_count();
+                json_response(
+                    200,
+                    json!({
                         "ok": true,
                         "count": count,
                         "message": format!("Reloaded {} schemas", count)
-                    }))
-                }
-                Err(e) => json_response(500, json!({"error": format!("Failed to reload: {}", e)})),
+                    }),
+                )
             }
-        }
+            Err(e) => json_response(500, json!({"error": format!("Failed to reload: {}", e)})),
+        },
 
         // ============== View Endpoints ==============
 
         // List view names
-        ("GET", "/api/views") => {
-            match state.get_view_names() {
-                Ok(names) => json_response(200, json!({ "views": names })),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get view names: {}", e)})),
-            }
-        }
+        ("GET", "/api/views") => match state.get_view_names() {
+            Ok(names) => json_response(200, json!({ "views": names })),
+            Err(e) => json_response(
+                500,
+                json!({"error": format!("Failed to get view names: {}", e)}),
+            ),
+        },
 
         // Get all views with definitions
-        ("GET", "/api/views/available") => {
-            match state.get_all_views() {
-                Ok(views) => json_response(200, json!({ "views": views })),
-                Err(e) => json_response(500, json!({"error": format!("Failed to get views: {}", e)})),
-            }
-        }
+        ("GET", "/api/views/available") => match state.get_all_views() {
+            Ok(views) => json_response(200, json!({ "views": views })),
+            Err(e) => json_response(500, json!({"error": format!("Failed to get views: {}", e)})),
+        },
 
         // Get specific view
         (method, path) if method == "GET" && path.starts_with("/api/view/") => {
@@ -357,34 +422,43 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             let request: AddViewRequest = match serde_json::from_str(&body) {
                 Ok(r) => r,
                 Err(e) => {
-                    return json_response(400, json!({"error": format!("Invalid view request: {}", e)}));
+                    return json_response(
+                        400,
+                        json!({"error": format!("Invalid view request: {}", e)}),
+                    );
                 }
             };
 
             let view_name = request.name.clone();
             match state.add_view(request).await {
-                Ok(ViewAddOutcome::Added(view, schema)) => {
-                    json_response(201, json!({
+                Ok(ViewAddOutcome::Added(view, schema)) => json_response(
+                    201,
+                    json!({
                         "view": view,
                         "output_schema": schema,
-                    }))
-                }
-                Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => {
-                    json_response(200, json!({
+                    }),
+                ),
+                Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => json_response(
+                    200,
+                    json!({
                         "view": view,
                         "output_schema": schema,
-                    }))
-                }
-                Ok(ViewAddOutcome::Expanded(view, schema, old_name)) => {
-                    json_response(201, json!({
+                    }),
+                ),
+                Ok(ViewAddOutcome::Expanded(view, schema, old_name)) => json_response(
+                    201,
+                    json!({
                         "view": view,
                         "output_schema": schema,
                         "replaced_schema": old_name,
-                    }))
-                }
+                    }),
+                ),
                 Err(e) => {
                     tracing::error!("Failed to register view '{}': {}", view_name, e);
-                    json_response(400, json!({"error": format!("Failed to register view: {}", e)}))
+                    json_response(
+                        400,
+                        json!({"error": format!("Failed to register view: {}", e)}),
+                    )
                 }
             }
         }
@@ -392,8 +466,9 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         // ============== Root & Fallback ==============
 
         // Root endpoint
-        ("GET", "/") | ("POST", "/") => {
-            json_response(200, json!({
+        ("GET", "/") | ("POST", "/") => json_response(
+            200,
+            json!({
                 "service": "FoldDB Schema & View Registry",
                 "version": "2.0.0",
                 "endpoints": {
@@ -409,11 +484,14 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
                     "GET /api/view/{name}": "Get specific view",
                     "POST /api/views": "Register a new view"
                 }
-            }))
-        }
+            }),
+        ),
 
         // Not found
-        _ => json_response(404, json!({"error": format!("Not found: {} {}", method, path)})),
+        _ => json_response(
+            404,
+            json!({"error": format!("Not found: {} {}", method, path)}),
+        ),
     }
 }
 
