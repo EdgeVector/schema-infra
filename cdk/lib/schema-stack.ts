@@ -61,6 +61,12 @@ export class SchemaServiceStack extends Stack {
         SCHEMAS_TABLE: schemasTable.tableName,
         RUST_LOG: "info",
         ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
+        // Sled-backed store lives on Lambda ephemeral /tmp.
+        // Built-in Phase 1 schemas are deterministic and re-seeded on every
+        // cold start, so this is fine for them. User-submitted schemas do
+        // NOT persist across cold starts — see TODO: wire up EFS-backed
+        // persistence before prod multi-user rollout.
+        SCHEMA_DB_PATH: "/tmp/schema",
       },
     });
 
