@@ -5,15 +5,20 @@
 //! HTTP API via API Gateway. Supports both schema and view registration
 //! endpoints.
 //!
-//! Storage: Sled-only after fold_db#494 removed DynamoDB. The Lambda
-//! expects SCHEMA_DB_PATH to point at a writable directory; production
-//! must back this with EFS for persistence across cold starts.
+//! Storage: S3 blobs. The schema service state is backed by the
+//! `S3BlobPersistence` implementation of `ExternalSchemaPersistence`,
+//! which stores four JSON blobs (schemas, canonical_fields, views,
+//! transforms) plus a `wasm/{hash}.wasm` prefix in a single bucket.
+//! See `fold_db_node/docs/designs/schema_service_s3.md` for the design.
 
 // The `lambda_http::Error` type wraps a boxed error that Clippy's
 // result_large_err lint flags. The whole Lambda uses this error
 // consistently; rewriting every handler to box-on-return would be
 // substantial churn without behavior benefit.
 #![allow(clippy::result_large_err)]
+
+#[cfg(not(test))]
+mod s3_persistence;
 
 #[cfg(not(test))]
 use fold_db::schema_service::state::SchemaServiceState;
@@ -86,39 +91,49 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
         }
     }
 
-    SCHEMA_STATE
-        .get_or_try_init(|| async {
-            // The schema service is Sled-only after fold_db#494 removed
-            // the DynamoDB backend. SCHEMA_DB_PATH tells this Lambda
-            // where to open the Sled directory. For persistent
-            // production state the CDK stack MUST mount EFS at this
-            // path; otherwise the state is ephemeral per cold start
-            // and user-proposed schemas are lost (built-in schemas
-            // would still be re-seeded every cold start, but user
-            // content would not survive).
-            //
-            // Default: /mnt/schema (the expected EFS mount point).
-            // Override with SCHEMA_DB_PATH=/tmp/schema for ephemeral
-            // testing in non-production Lambdas.
-            let db_path = env::var("SCHEMA_DB_PATH").unwrap_or_else(|_| "/mnt/schema".to_string());
+    // S3 bucket for the four domain blobs + wasm prefix. Set by the
+    // CDK stack; the Lambda refuses to start without it. We build the
+    // S3 client and the persistence backend outside OnceCell so any
+    // failure surfaces as a cold-start error rather than a swallowed
+    // panic from inside the init closure.
+    let bucket = env::var("SCHEMA_STORE_BUCKET").map_err(|_| {
+        Error::from(
+            "SCHEMA_STORE_BUCKET env var is not set. The schema service Lambda requires \
+             an S3 bucket to persist schemas, canonical fields, views, and transforms. \
+             See CDK: schema-stack.ts",
+        )
+    })?;
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let s3_client = aws_sdk_s3::Client::new(&aws_config);
+    let backend: Arc<dyn fold_db::schema_service::external_persistence::ExternalSchemaPersistence> =
+        Arc::new(s3_persistence::S3BlobPersistence::new(
+            s3_client,
+            bucket.clone(),
+        ));
 
+    SCHEMA_STATE
+        .get_or_try_init(|| async move {
             tracing::info!(
-                "Initializing schema service with Sled storage at: {}",
-                db_path
+                bucket = %bucket,
+                "Initializing schema service with S3 blob storage",
             );
 
-            let state = SchemaServiceState::new(db_path.clone()).map_err(|e| {
-                Error::from(format!(
-                    "Failed to initialize schema service at '{}': {}. \
-                     Ensure SCHEMA_DB_PATH points at a writable directory \
-                     (production: EFS-backed; dev: any local path).",
-                    db_path, e
-                ))
-            })?;
+            let state = SchemaServiceState::new_with_external(backend)
+                .await
+                .map_err(|e| {
+                    Error::from(format!(
+                        "Failed to initialize schema service against S3 bucket '{}': {}. \
+                         Check that the bucket exists, the Lambda's IAM role has \
+                         s3:GetObject and s3:PutObject on it, and the domain blobs \
+                         (schemas.json, canonical_fields.json, views.json, transforms.json) \
+                         are either absent or valid JSON.",
+                        bucket, e
+                    ))
+                })?;
 
             // Seed the twelve Phase 1 built-in fingerprint schemas.
-            // These are system primitives (Fingerprint, Mention,
-            // Edge, Identity, IdentityReceipt, Persona, and the three
+            // These are system primitives (Fingerprint, Mention, Edge,
+            // Identity, IdentityReceipt, Persona, and the three
             // junction + three support schemas). They must exist
             // before any fold_db_node running the fingerprints
             // subsystem can start, because the node fetches them by
@@ -126,19 +141,17 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
             // are missing.
             //
             // Idempotent: schemas already present (from a previous
-            // cold start, past deploy, or legacy propose-based flows
-            // from fold_db_node versions before the schema-service-
-            // built-ins migration) are skipped by identity_hash match.
-            // Fails loudly on any real error so the Lambda cold-start
-            // crashes rather than serving requests against a half-
-            // seeded registry.
+            // cold start or past deploy) are skipped by identity_hash
+            // match. Fails loudly on any real error so the Lambda
+            // cold-start crashes rather than serving requests against
+            // a half-seeded registry.
             fold_db::schema_service::builtin_schemas::seed(&state)
                 .await
                 .map_err(|e| {
                     Error::from(format!(
                         "Failed to seed Phase 1 built-in schemas: {}. \
-                     The Lambda cannot serve fingerprint-subsystem \
-                     requests without these.",
+                         The Lambda cannot serve fingerprint-subsystem \
+                         requests without these.",
                         e
                     ))
                 })?;
