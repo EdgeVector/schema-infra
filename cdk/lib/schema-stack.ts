@@ -71,8 +71,16 @@ export class SchemaServiceStack extends Stack {
       code: lambda.Code.fromAsset(
         "../lambdas/schema_service/target/lambda/schema_service-extracted",
       ),
-      timeout: Duration.seconds(30),
-      memorySize: 256,
+      // First cold start on an empty bucket seeds 12 Phase 1 built-in
+      // schemas. Each schema triggers canonical-field registration
+      // (LLM classify) + RMW persistence to canonical_fields.json and
+      // schemas.json. On a fresh bucket this can take 2–3 minutes
+      // total. Once the blobs are populated, every later cold start
+      // just loads the blobs (< 1s) and the seed returns AlreadyExists
+      // without any S3 writes, so warm invocations complete in
+      // milliseconds.
+      timeout: Duration.seconds(300),
+      memorySize: 512,
       environment: {
         RUST_LOG: "info",
         ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
