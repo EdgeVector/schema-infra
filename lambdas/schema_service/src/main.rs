@@ -131,6 +131,22 @@ async fn get_or_init_state() -> Result<Arc<SchemaServiceState>, Error> {
                     ))
                 })?;
 
+            // Seed the curated canonical field registry BEFORE seeding
+            // schemas, so that schema field classification hits the
+            // pre-populated entries on the first pass and skips the
+            // Anthropic LLM round-trip per field. Without this, the
+            // fresh-bucket cold start spends minutes classifying common
+            // concepts like `user_email` and `photo_caption` that we
+            // already know how to classify.
+            fold_db::schema_service::builtin_canonical_fields::seed(&state)
+                .await
+                .map_err(|e| {
+                    Error::from(format!(
+                        "Failed to seed pre-populated canonical fields: {}",
+                        e
+                    ))
+                })?;
+
             // Seed the twelve Phase 1 built-in fingerprint schemas.
             // These are system primitives (Fingerprint, Mention, Edge,
             // Identity, IdentityReceipt, Persona, and the three
