@@ -6,7 +6,7 @@ import {
   RemovalPolicy,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
-import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -25,16 +25,32 @@ export class SchemaServiceStack extends Stack {
     const isProd = envName === "prod";
 
     // =====================================================
-    // DynamoDB Table for Schema Storage
-    // Uses PK (user_id) and SK (schema_name) as key schema
-    // to match DynamoDbSchemaStore in fold_db
+    // S3 Bucket for Schema Service state
+    //
+    // The schema service persists its state in four JSON domain blobs
+    // plus a wasm/ prefix, all inside this bucket:
+    //
+    //   schemas.json            - all registered schemas
+    //   canonical_fields.json   - global canonical field registry
+    //   views.json              - registered views
+    //   transforms.json         - transform metadata (NMI matrix, etc.)
+    //   wasm/{hash}.wasm        - content-addressed WASM bytes
+    //
+    // Writes use If-Match ETag read-modify-write for the domain blobs
+    // and If-None-Match for content-addressed WASM. See the design at
+    // fold_db_node/docs/designs/schema_service_s3.md for the full
+    // architecture, including scale ceiling and migration triggers.
+    //
+    // Versioning is enabled so we keep rollback history if a bad PUT
+    // ever corrupts a blob. S3 versioning costs pennies at this scale.
     // =====================================================
-    const schemasTable = new dynamodb.Table(this, "SchemasTable", {
-      partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
-      sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    const schemaBucket = new s3.Bucket(this, "SchemaBucket", {
+      bucketName: `schema-service-${envName}-${Stack.of(this).account}`,
+      versioned: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
       removalPolicy: RemovalPolicy.RETAIN,
-      pointInTimeRecovery: true,
+      enforceSSL: true,
     });
 
     // =====================================================
@@ -58,23 +74,23 @@ export class SchemaServiceStack extends Stack {
       timeout: Duration.seconds(30),
       memorySize: 256,
       environment: {
-        SCHEMAS_TABLE: schemasTable.tableName,
         RUST_LOG: "info",
         ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
-        // Sled-backed store lives on Lambda ephemeral /tmp.
-        // Built-in Phase 1 schemas are deterministic and re-seeded on every
-        // cold start, so this is fine for them. User-submitted schemas do
-        // NOT persist across cold starts — see TODO: wire up EFS-backed
-        // persistence before prod multi-user rollout.
-        SCHEMA_DB_PATH: "/tmp/schema",
+        // The schema service persists all state in this S3 bucket via
+        // S3BlobPersistence. No filesystem required, no VPC, no EFS.
+        // User-submitted schemas and canonical fields persist across
+        // cold starts because S3 is the source of truth.
+        SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
       },
     });
 
     // Grant Lambda access to Anthropic API key secret
     anthropicApiKey.grantRead(schemaServiceFn);
 
-    // Grant Lambda access to DynamoDB
-    schemasTable.grantReadWriteData(schemaServiceFn);
+    // Grant Lambda read/write on the schema bucket. We scope to the
+    // four known domain blob keys plus the wasm/ prefix so an errant
+    // Lambda bug can't touch unrelated keys in the bucket.
+    schemaBucket.grantReadWrite(schemaServiceFn);
 
     // =====================================================
     // HTTP API Gateway with CORS
@@ -243,9 +259,9 @@ export class SchemaServiceStack extends Stack {
       description: "Schema service API endpoint",
     });
 
-    new CfnOutput(this, "SchemasTableName", {
-      value: schemasTable.tableName,
-      description: "DynamoDB table for schema storage",
+    new CfnOutput(this, "SchemaServiceBucketName", {
+      value: schemaBucket.bucketName,
+      description: "S3 bucket backing the schema service state",
     });
 
     new CfnOutput(this, "SchemaServiceFunctionName", {

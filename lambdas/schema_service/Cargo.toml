@@ -22,11 +22,16 @@ lambda_http = "0.13"
 lambda_runtime = "0.13"
 tokio = { version = "1", features = ["full"] }
 
-# AWS SDK (Secrets Manager for API key resolution)
+# AWS SDK (Secrets Manager for API key resolution; S3 for schema persistence)
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-secretsmanager = "1"
+aws-sdk-s3 = "1"
+
+# Async trait (required for ExternalSchemaPersistence impl)
+async-trait = "0.1"
 
 # Serialization
+serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 
 # Logging
