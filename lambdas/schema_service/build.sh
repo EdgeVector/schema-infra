@@ -55,5 +55,52 @@ mkdir -p "$TARGET_DIR"
 # Extract the bootstrap binary from the zip
 unzip -o "$SCRIPT_DIR/target/lambda/schema_service/bootstrap.zip" -d "$TARGET_DIR/"
 
+# ---------------------------------------------------------------------------
+# Bundle the fastembed model (all-MiniLM-L6-v2) into the Lambda artifact.
+#
+# Without this, fastembed's first call inside the Lambda tries to reach
+# HuggingFace Hub, fails slowly (~200ms per retry), and falls back to a
+# heuristic. That fallback wastes ~40s on the first cold-start request
+# classifying built-in schema names — observed in CloudWatch for
+# SchemaServiceStack-dev before this bundling was in place.
+#
+# Layout we produce mirrors hf_hub 0.4's cache (see:
+# cargo registry/src/hf-hub-0.4.3/src/lib.rs, `pub fn get`):
+#   .fastembed_cache/
+#     models--Qdrant--all-MiniLM-L6-v2-onnx/
+#       refs/main                               → contains revision hash
+#       snapshots/<revision>/{model.onnx, tokenizer.json, ...}
+#
+# The Lambda sets FASTEMBED_CACHE_DIR=/var/task/.fastembed_cache and
+# HF_HUB_OFFLINE=1 (see main.rs) so fastembed finds these files without
+# ever touching the network.
+# ---------------------------------------------------------------------------
+HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
+# Pinned so a model.onnx change upstream can't silently break the Lambda
+# — update this hash deliberately when you want a new model version.
+HF_REVISION="5f1b8cd78bc4fb444dd171e59b18f3a3af89a079"
+MODEL_FILES=(model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json)
+
+CACHE_ROOT="$TARGET_DIR/.fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
+SNAPSHOT_DIR="$CACHE_ROOT/snapshots/$HF_REVISION"
+mkdir -p "$SNAPSHOT_DIR" "$CACHE_ROOT/refs"
+
+# Revision pointer that hf_hub reads to locate the snapshot folder.
+echo -n "$HF_REVISION" > "$CACHE_ROOT/refs/main"
+
+echo "Downloading fastembed model files (~91MB total)..."
+for f in "${MODEL_FILES[@]}"; do
+    target="$SNAPSHOT_DIR/$f"
+    if [ -s "$target" ]; then
+        echo "  [cached] $f"
+        continue
+    fi
+    url="https://huggingface.co/$HF_REPO/resolve/$HF_REVISION/$f"
+    echo "  [download] $f"
+    curl -fsSL -o "$target" "$url" || { echo "ERROR: failed to download $f"; exit 1; }
+done
+echo "Model cache prepared at $CACHE_ROOT"
+ls -la "$SNAPSHOT_DIR"
+
 echo "Build complete: $TARGET_DIR"
 ls -la "$TARGET_DIR"
