@@ -594,5 +594,34 @@ async fn main() -> Result<(), Error> {
 
     tracing::info!("Schema service Lambda starting...");
 
+    // Point fastembed at the bundled model cache and refuse to hit
+    // HuggingFace — both are no-ops on user machines with the default
+    // cache, but decisive in Lambda where outbound network access is
+    // unreliable and each miss costs ~200ms of retry before the
+    // heuristic fallback. Safe to set even if the cache is missing.
+    if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
+        std::env::set_var("FASTEMBED_CACHE_DIR", "/var/task/.fastembed_cache");
+    }
+    if std::env::var_os("HF_HUB_OFFLINE").is_none() {
+        std::env::set_var("HF_HUB_OFFLINE", "1");
+    }
+
+    // Do the expensive state initialization (S3 hydration + built-in
+    // seeding) during Lambda init, not on the first handler invocation.
+    // Lambda's init phase has a 10s ceiling before it's counted against
+    // the cold-start budget but — critically — it is NOT bounded by
+    // API Gateway's 29s integration timeout. Moving the work here means
+    // cold starts never produce a first-request 503 for a client that
+    // has been waiting at the HTTP layer.
+    //
+    // If init fails we return the error from main, which causes Lambda
+    // to mark the container as failed. That's the correct behavior for
+    // a misconfigured service (e.g. missing S3 bucket, bad IAM).
+    if let Err(e) = get_or_init_state().await {
+        tracing::error!("Schema service init failed during Lambda init phase: {e}");
+        return Err(e);
+    }
+    tracing::info!("Schema service init complete during Lambda init phase");
+
     run(service_fn(function_handler)).await
 }
