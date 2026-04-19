@@ -63,6 +63,39 @@ export class SchemaServiceStack extends Stack {
     );
 
     // =====================================================
+    // Fastembed Model Layer
+    //
+    // The schema service uses fastembed (all-MiniLM-L6-v2 ONNX) for
+    // semantic matching of schema names and canonical fields. Pulling
+    // the model from HuggingFace at cold start cost ~40s of wasted
+    // retries before falling back to a heuristic — see the CloudWatch
+    // trace in PR #11 for the before-picture.
+    //
+    // We ship the model as a Layer rather than bundling it in the
+    // function zip so that:
+    //   - function code stays ~20MB and iterates in seconds on deploy;
+    //   - the 90MB model is uploaded once per model-version change,
+    //     not on every code edit;
+    //   - layer content lands at /opt/ in the running Lambda, which
+    //     matches the FASTEMBED_CACHE_DIR=/opt/fastembed_cache set by
+    //     the function (see lambdas/schema_service/src/main.rs).
+    //
+    // The layer asset directory is populated by build.sh — it downloads
+    // the five files fastembed needs (model.onnx + four tokenizer
+    // files) from the pinned HF revision into hf-hub 0.4 cache layout.
+    // =====================================================
+    const fastembedLayer = new lambda.LayerVersion(this, "FastembedModelLayer", {
+      code: lambda.Code.fromAsset(
+        "../lambdas/schema_service/target/lambda/fastembed_layer",
+      ),
+      compatibleRuntimes: [lambda.Runtime.PROVIDED_AL2023],
+      compatibleArchitectures: [lambda.Architecture.X86_64],
+      description:
+        "fastembed all-MiniLM-L6-v2 ONNX model + tokenizer files at /opt/fastembed_cache/",
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    // =====================================================
     // Schema Service Lambda Function
     // =====================================================
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
@@ -71,6 +104,7 @@ export class SchemaServiceStack extends Stack {
       code: lambda.Code.fromAsset(
         "../lambdas/schema_service/target/lambda/schema_service-extracted",
       ),
+      layers: [fastembedLayer],
       // First cold start on an empty bucket seeds 12 Phase 1 built-in
       // schemas. Each schema triggers canonical-field registration
       // (LLM classify) + RMW persistence to canonical_fields.json and
