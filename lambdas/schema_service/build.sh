@@ -66,12 +66,18 @@ unzip -o "$SCRIPT_DIR/target/lambda/schema_service/bootstrap.zip" -d "$TARGET_DI
 #
 # Layout we produce mirrors hf_hub 0.4's cache (see:
 # cargo registry/src/hf-hub-0.4.3/src/lib.rs, `pub fn get`):
-#   .fastembed_cache/
+#   fastembed_cache/
 #     models--Qdrant--all-MiniLM-L6-v2-onnx/
 #       refs/main                               → contains revision hash
 #       snapshots/<revision>/{model.onnx, tokenizer.json, ...}
 #
-# The Lambda sets FASTEMBED_CACHE_DIR=/var/task/.fastembed_cache and
+# NOTE: no leading dot on `fastembed_cache`. `actions/upload-artifact@v4`
+# excludes hidden entries by default (first observed on deploy run
+# 24613753418), which silently dropped the model between the build and
+# deploy jobs and left the Lambda identical in size to the pre-bundle
+# build. Keeping the directory name dotless avoids the footgun forever.
+#
+# The Lambda sets FASTEMBED_CACHE_DIR=/var/task/fastembed_cache and
 # HF_HUB_OFFLINE=1 (see main.rs) so fastembed finds these files without
 # ever touching the network.
 # ---------------------------------------------------------------------------
@@ -81,7 +87,7 @@ HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
 HF_REVISION="5f1b8cd78bc4fb444dd171e59b18f3a3af89a079"
 MODEL_FILES=(model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json)
 
-CACHE_ROOT="$TARGET_DIR/.fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
+CACHE_ROOT="$TARGET_DIR/fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
 SNAPSHOT_DIR="$CACHE_ROOT/snapshots/$HF_REVISION"
 mkdir -p "$SNAPSHOT_DIR" "$CACHE_ROOT/refs"
 

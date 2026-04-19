@@ -600,7 +600,11 @@ async fn main() -> Result<(), Error> {
     // unreliable and each miss costs ~200ms of retry before the
     // heuristic fallback. Safe to set even if the cache is missing.
     if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
-        std::env::set_var("FASTEMBED_CACHE_DIR", "/var/task/.fastembed_cache");
+        // NOTE: no leading dot — hidden directories are excluded by
+        // `actions/upload-artifact@v4` by default, which silently drops
+        // the bundled model between the build job and the deploy job.
+        // Must match the path produced by `build.sh`.
+        std::env::set_var("FASTEMBED_CACHE_DIR", "/var/task/fastembed_cache");
     }
     if std::env::var_os("HF_HUB_OFFLINE").is_none() {
         std::env::set_var("HF_HUB_OFFLINE", "1");
