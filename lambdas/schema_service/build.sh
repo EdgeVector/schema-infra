@@ -56,24 +56,34 @@ mkdir -p "$TARGET_DIR"
 unzip -o "$SCRIPT_DIR/target/lambda/schema_service/bootstrap.zip" -d "$TARGET_DIR/"
 
 # ---------------------------------------------------------------------------
-# Bundle the fastembed model (all-MiniLM-L6-v2) into the Lambda artifact.
+# Bundle the fastembed model (all-MiniLM-L6-v2) into a SEPARATE Lambda Layer
+# artifact — NOT the function zip.
 #
-# Without this, fastembed's first call inside the Lambda tries to reach
-# HuggingFace Hub, fails slowly (~200ms per retry), and falls back to a
-# heuristic. That fallback wastes ~40s on the first cold-start request
-# classifying built-in schema names — observed in CloudWatch for
-# SchemaServiceStack-dev before this bundling was in place.
+# Why a Layer rather than the function zip:
+# - Layer is uploaded once per model-version change, not on every code edit.
+# - Function zip stays ~20MB, so function deploys are fast.
+# - AWS mounts layer contents at /opt/, so the Lambda reads the model
+#   from /opt/fastembed_cache/... with no filesystem copy at runtime.
 #
-# Layout we produce mirrors hf_hub 0.4's cache (see:
-# cargo registry/src/hf-hub-0.4.3/src/lib.rs, `pub fn get`):
-#   .fastembed_cache/
+# Why bundle rather than download at runtime: cold-start reliability. The
+# original behavior (fastembed pulls from HuggingFace on first use) fails
+# slowly (~200ms per retry) and falls back to heuristics — wasting 40s
+# of first-request time classifying ~200 built-in schema fields.
+#
+# Layout mirrors hf_hub 0.4's cache (see hf-hub-0.4.3/src/lib.rs `pub fn get`):
+#   fastembed_cache/
 #     models--Qdrant--all-MiniLM-L6-v2-onnx/
-#       refs/main                               → contains revision hash
+#       refs/main                               → revision hash
 #       snapshots/<revision>/{model.onnx, tokenizer.json, ...}
 #
-# The Lambda sets FASTEMBED_CACHE_DIR=/var/task/.fastembed_cache and
-# HF_HUB_OFFLINE=1 (see main.rs) so fastembed finds these files without
-# ever touching the network.
+# Layer filesystem root maps to /opt/, so the Lambda sets:
+#   FASTEMBED_CACHE_DIR=/opt/fastembed_cache
+#   HF_HUB_OFFLINE=1
+# and fastembed finds the files without ever touching the network.
+#
+# No leading dot on `fastembed_cache` — actions/upload-artifact@v4
+# excludes hidden entries by default, which silently drops bundled files
+# between CI jobs (observed on run 24613753418 for the pre-Layer design).
 # ---------------------------------------------------------------------------
 HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
 # Pinned so a model.onnx change upstream can't silently break the Lambda
@@ -81,14 +91,15 @@ HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
 HF_REVISION="5f1b8cd78bc4fb444dd171e59b18f3a3af89a079"
 MODEL_FILES=(model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json)
 
-CACHE_ROOT="$TARGET_DIR/.fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
+LAYER_DIR="$SCRIPT_DIR/target/lambda/fastembed_layer"
+CACHE_ROOT="$LAYER_DIR/fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
 SNAPSHOT_DIR="$CACHE_ROOT/snapshots/$HF_REVISION"
 mkdir -p "$SNAPSHOT_DIR" "$CACHE_ROOT/refs"
 
 # Revision pointer that hf_hub reads to locate the snapshot folder.
 echo -n "$HF_REVISION" > "$CACHE_ROOT/refs/main"
 
-echo "Downloading fastembed model files (~91MB total)..."
+echo "Downloading fastembed model files (~91MB total) into Layer artifact..."
 for f in "${MODEL_FILES[@]}"; do
     target="$SNAPSHOT_DIR/$f"
     if [ -s "$target" ]; then
@@ -99,8 +110,9 @@ for f in "${MODEL_FILES[@]}"; do
     echo "  [download] $f"
     curl -fsSL -o "$target" "$url" || { echo "ERROR: failed to download $f"; exit 1; }
 done
-echo "Model cache prepared at $CACHE_ROOT"
+echo "Layer artifact prepared at $LAYER_DIR"
 ls -la "$SNAPSHOT_DIR"
 
-echo "Build complete: $TARGET_DIR"
+echo "Function artifact: $TARGET_DIR"
 ls -la "$TARGET_DIR"
+echo "Layer artifact:    $LAYER_DIR"

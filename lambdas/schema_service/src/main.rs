@@ -600,7 +600,12 @@ async fn main() -> Result<(), Error> {
     // unreliable and each miss costs ~200ms of retry before the
     // heuristic fallback. Safe to set even if the cache is missing.
     if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
-        std::env::set_var("FASTEMBED_CACHE_DIR", "/var/task/.fastembed_cache");
+        // AWS Lambda mounts layer contents at /opt/. The fastembed model
+        // + tokenizer files ship as a separate Layer (see cdk:
+        // schema-stack.ts, `FastembedModelLayer`) so the function code
+        // stays ~20MB and iterates fast; the 90MB model is versioned
+        // with the Layer, not copied on every function deploy.
+        std::env::set_var("FASTEMBED_CACHE_DIR", "/opt/fastembed_cache");
     }
     if std::env::var_os("HF_HUB_OFFLINE").is_none() {
         std::env::set_var("HF_HUB_OFFLINE", "1");
