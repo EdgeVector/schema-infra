@@ -6,23 +6,43 @@ Standalone infrastructure for the FoldDB Schema Service (`schema.folddb.com`).
 
 This project contains everything needed to deploy the global schema registry for FoldDB:
 
-- **Lambda Function**: Rust-based schema service
-- **DynamoDB Table**: Schema storage
+- **Lambda Function**: Rust-based schema service with fastembed semantic search
+- **S3 Bucket**: Schema blob persistence (one JSON object per schema)
 - **API Gateway**: HTTP API with CORS and custom domain support
 - **Frontend**: Web UI for browsing schemas
+
+## Architecture
+
+The schema service runs as a single Lambda function with two storage layers:
+
+1. **S3 blob persistence** — each schema stored as `schemas/<name>.json` in an S3 bucket. Replaced the earlier Sled-on-/tmp approach, which was unreliable across cold starts. S3 gives durable, consistent storage with no /tmp size limits.
+2. **fastembed Lambda Layer** — a pre-built layer bundles the fastembed model binary so the Lambda doesn't download it on every cold start. Cold start stays under 2s even with the embedding model loaded.
+
+Lambda configuration:
+- **Timeout**: 300 seconds (5 minutes) — required for fastembed model loading on first cold start
+- **Memory**: 512 MB — required for embedding model inference
+
+## Builtin Canonical Fields
+
+On cold start the Lambda calls `seed_canonical_fields()` to pre-populate ~150 curated canonical fields (e.g., `user_email`, `photo_caption`, `gps_latitude`, `document_title`). Each field has a hardcoded description, data classification, and interest category. These are the shared vocabulary that enables schema deduplication and similarity across different FoldDB nodes.
+
+Canonical fields are used by:
+- Schema similarity detection (same semantic field → high similarity score)
+- Schema expansion (safely add new fields without breaking existing data)
+- Data browser field labeling
 
 ## Structure
 
 ```
 schema-infra/
-├── cdk/                    # CDK infrastructure
+├── cdk/                    # CDK infrastructure (TypeScript)
 │   ├── bin/               # CDK app entry point
 │   ├── lib/               # Stack definitions
 │   └── package.json       # CDK dependencies
 ├── lambdas/
-│   └── schema_service/    # Schema service Lambda
+│   └── schema_service/    # Schema service Lambda (Rust)
 ├── frontend/              # Schema registry web UI
-├── build.sh              # Build Lambda
+├── build.sh              # Build Lambda binary
 └── deploy.sh             # Deploy infrastructure
 ```
 
@@ -47,7 +67,7 @@ schema-infra/
 # Deploy to dev
 ./deploy.sh dev
 
-# Deploy to production
+# Deploy to production (schema.folddb.com)
 ./deploy.sh prod
 ```
 
@@ -76,13 +96,35 @@ Deploy to Vercel or another static hosting service.
 
 ## API Endpoints
 
-| Method | Path                     | Description                      |
-| ------ | ------------------------ | -------------------------------- |
-| GET    | `/health`                | Health check                     |
-| GET    | `/api/schemas`           | List schema names                |
-| GET    | `/api/schemas/available` | Get all schemas with definitions |
-| GET    | `/api/schema/{name}`     | Get specific schema              |
-| POST   | `/api/schemas`           | Register new schema              |
+| Method | Path                     | Description                              |
+| ------ | ------------------------ | ---------------------------------------- |
+| GET    | `/health`                | Health check                             |
+| GET    | `/api/schemas`           | List schema names                        |
+| GET    | `/api/schemas/available` | Get all schemas with definitions         |
+| GET    | `/api/schema/{name}`     | Get specific schema                      |
+| POST   | `/api/schemas`           | Register / propose schema                |
+| GET    | `/api/canonical-fields`  | List all builtin canonical fields (~150) |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SCHEMAS_BUCKET` | S3 bucket name for schema blob storage |
+| `FASTEMBED_CACHE_DIR` | Path to pre-extracted fastembed model (provided by Lambda Layer) |
+
+## Storage Backend
+
+Schemas are stored in S3 as individual JSON blobs:
+
+```
+s3://<SCHEMAS_BUCKET>/schemas/<schema_name>.json
+```
+
+The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the local/self-hosted binary in `fold_db_node/src/bin/schema_service.rs` uses `SledSchemaPersistence` (port 9002, for development and self-hosted deployments).
+
+## fastembed Lambda Layer
+
+The fastembed model is bundled as a Lambda Layer (`fastembed-model-layer`) and mounted at `/opt/fastembed/`. The Lambda reads `FASTEMBED_CACHE_DIR=/opt/fastembed` so it never downloads the model at runtime. The layer is published once and referenced by ARN in the CDK stack.
 
 ## License
 
