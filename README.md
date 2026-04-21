@@ -39,12 +39,13 @@ schema-infra/
 │   ├── bin/               # CDK app entry point
 │   ├── lib/               # Stack definitions
 │   └── package.json       # CDK dependencies
-├── lambdas/
-│   └── schema_service/    # Schema service Lambda (Rust)
+├── schema_service/        # Lambda handler source (submodule → EdgeVector/schema_service)
 ├── frontend/              # Schema registry web UI
-├── build.sh              # Build Lambda binary
+├── build.sh              # Build Lambda zip + fastembed Layer
 └── deploy.sh             # Deploy infrastructure
 ```
+
+Lambda handler source now lives in the [`EdgeVector/schema_service`](https://github.com/EdgeVector/schema_service) repo, vendored here as a submodule at `schema_service/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` inside the submodule and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
 
 ## Quick Start
 

@@ -9,12 +9,8 @@
 #      fastembed pulls in, links against the Lambda runtime glibc).
 #   3. Extract the zip to `schema_service/target/lambda/server_lambda-extracted/`
 #      which is the path CDK reads via `Code.fromAsset(...)`.
-#   4. Download the fastembed model files into the Layer artifact
-#      directory (kept at the old location for this PR; PR 5 cleanup
-#      will move it).
-#
-# Legacy `lambdas/schema_service/build.sh` still works for emergency
-# rollback and is removed in Phase 1 PR 5/5.
+#   4. Download the fastembed model files into `target/fastembed_layer/`
+#      (at schema-infra repo root). CDK reads this via Code.fromAsset.
 #
 # Usage:
 #   ./build.sh                    # release build
@@ -124,9 +120,8 @@ ls -la "$EXTRACTED_DIR"
 #    artifact directory CDK reads via lambda.Code.fromAsset.
 #
 # Per Phase 1 D2 the Layer source lives in schema-infra (this repo)
-# because the Layer is a deploy concern. Output path stays at
-# lambdas/schema_service/target/lambda/fastembed_layer for this PR
-# (PR 5 relocates it after the lambdas/ dir is removed).
+# because the Layer is a deploy concern. Output path is
+# target/fastembed_layer/ at the repo root.
 # =============================================================
 HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
 # Pinned so a model.onnx change upstream can't silently break the Lambda —
@@ -134,7 +129,7 @@ HF_REPO="Qdrant/all-MiniLM-L6-v2-onnx"
 HF_REVISION="5f1b8cd78bc4fb444dd171e59b18f3a3af89a079"
 MODEL_FILES=(model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json)
 
-LAYER_DIR="$SCRIPT_DIR/lambdas/schema_service/target/lambda/fastembed_layer"
+LAYER_DIR="$SCRIPT_DIR/target/fastembed_layer"
 CACHE_ROOT="$LAYER_DIR/fastembed_cache/models--Qdrant--all-MiniLM-L6-v2-onnx"
 SNAPSHOT_DIR="$CACHE_ROOT/snapshots/$HF_REVISION"
 mkdir -p "$SNAPSHOT_DIR" "$CACHE_ROOT/refs"

@@ -78,7 +78,7 @@ export class SchemaServiceStack extends Stack {
     //     not on every code edit;
     //   - layer content lands at /opt/ in the running Lambda, which
     //     matches the FASTEMBED_CACHE_DIR=/opt/fastembed_cache set by
-    //     the function (see lambdas/schema_service/src/main.rs).
+    //     the function (see schema_service submodule's server_lambda).
     //
     // The layer asset directory is populated by build.sh — it downloads
     // the five files fastembed needs (model.onnx + four tokenizer
@@ -86,7 +86,7 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     const fastembedLayer = new lambda.LayerVersion(this, "FastembedModelLayer", {
       code: lambda.Code.fromAsset(
-        "../lambdas/schema_service/target/lambda/fastembed_layer",
+        "../target/fastembed_layer",
       ),
       compatibleRuntimes: [lambda.Runtime.PROVIDED_AL2023],
       compatibleArchitectures: [lambda.Architecture.X86_64],
@@ -98,14 +98,12 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // Schema Service Lambda Function
     // =====================================================
-    // Lambda source moved out of `schema-infra/lambdas/schema_service/`
-    // and into the `schema_service` repo (submodule at `schema-infra/
-    // schema_service/`). The build pipeline in `build.sh` runs
-    // `cargo lambda build -p schema_service_server_lambda` inside the
-    // submodule and extracts the resulting bootstrap.zip to the path
-    // referenced below. See `projects/phase-1-t4-cdk-switch` for the
-    // cutover rationale. The old `lambdas/schema_service/` remains on
-    // disk as a rollback target and is deleted in PR 5/5.
+    // Lambda source lives in the `schema_service` repo (submodule at
+    // `schema-infra/schema_service/`). The build pipeline in `build.sh`
+    // runs `cargo lambda build -p schema_service_server_lambda` inside
+    // the submodule and extracts the resulting bootstrap.zip to the
+    // path referenced below. See `projects/phase-1-t4-cdk-switch` for
+    // the cutover rationale.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
