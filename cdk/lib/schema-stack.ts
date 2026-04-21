@@ -98,11 +98,19 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // Schema Service Lambda Function
     // =====================================================
+    // Lambda source moved out of `schema-infra/lambdas/schema_service/`
+    // and into the `schema_service` repo (submodule at `schema-infra/
+    // schema_service/`). The build pipeline in `build.sh` runs
+    // `cargo lambda build -p schema_service_server_lambda` inside the
+    // submodule and extracts the resulting bootstrap.zip to the path
+    // referenced below. See `projects/phase-1-t4-cdk-switch` for the
+    // cutover rationale. The old `lambdas/schema_service/` remains on
+    // disk as a rollback target and is deleted in PR 5/5.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
       code: lambda.Code.fromAsset(
-        "../lambdas/schema_service/target/lambda/schema_service-extracted",
+        "../schema_service/target/lambda/server_lambda-extracted",
       ),
       layers: [fastembedLayer],
       // First cold start on an empty bucket seeds 12 Phase 1 built-in
@@ -275,6 +283,78 @@ export class SchemaServiceStack extends Stack {
         schemaServiceFn,
       ),
     });
+
+    // =====================================================
+    // Routes added for the new server_lambda (Phase 1 PR 4/5).
+    //
+    // These eight endpoints land in the Lambda via Phase 1 PR 2/5 and
+    // close the parity gap with the actix wrapper. They are /v1-only —
+    // the old in-tree Lambda never served them, so there is no /api/*
+    // path to keep alive. `POST /v1/schemas/reload` is also added
+    // because the new handler exposes it (the old one did not).
+    // =====================================================
+    const v1OnlyRoutes: Array<{
+      path: string;
+      methods: apigwv2.HttpMethod[];
+      integrationId: string;
+    }> = [
+      {
+        path: "/v1/schemas/batch-check-reuse",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaBatchCheckReuseIntegrationV1",
+      },
+      {
+        path: "/v1/schemas/reload",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaReloadIntegrationV1",
+      },
+      {
+        path: "/v1/transforms",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "TransformListIntegrationV1",
+      },
+      {
+        path: "/v1/transforms/available",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "TransformAvailableIntegrationV1",
+      },
+      {
+        path: "/v1/transforms/verify",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "TransformVerifyIntegrationV1",
+      },
+      {
+        path: "/v1/transforms/similar/{name}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "TransformSimilarIntegrationV1",
+      },
+      {
+        path: "/v1/transform/{hash}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "TransformGetIntegrationV1",
+      },
+      {
+        // NB: API Gateway HTTP API path variables are single-segment
+        // by design (no greedy `{hash+}`), so `/v1/transform/{hash}/wasm`
+        // is a separate route — matched before the parent `{hash}` arm
+        // in the Lambda's dispatch, but API Gateway routes both here
+        // regardless of order.
+        path: "/v1/transform/{hash}/wasm",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "TransformWasmIntegrationV1",
+      },
+    ];
+
+    for (const route of v1OnlyRoutes) {
+      httpApi.addRoutes({
+        path: route.path,
+        methods: route.methods,
+        integration: new apigwv2Integrations.HttpLambdaIntegration(
+          route.integrationId,
+          schemaServiceFn,
+        ),
+      });
+    }
 
     // =====================================================
     // Custom Domain (schema.folddb.com) — prod only

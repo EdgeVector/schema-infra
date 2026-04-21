@@ -48,10 +48,9 @@ fi
 export AWS_REGION="$REGION"
 export AWS_DEFAULT_REGION="$REGION"
 
-# Build Lambda
+# Build Lambda (submodule-backed; see build.sh header)
 echo "Building Lambda (profile: $BUILD_PROFILE)..."
-cd "$SCRIPT_DIR/lambdas/schema_service"
-./build.sh "$BUILD_PROFILE"
+"$SCRIPT_DIR/build.sh" "$BUILD_PROFILE"
 
 # Deploy CDK
 if [ "$SKIP_INFRA" = false ]; then
