@@ -10,62 +10,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 1. Test
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Clone fold_db dependency
-        run: |
-          git clone --depth 1 --branch mainline https://github.com/shiba4life/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
-          mkdir -p "$GITHUB_WORKSPACE/../fold_db/src/server/static-react/dist"
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            lambdas/schema_service/target/
-          key: ${{ runner.os }}-test-schema-service-${{ hashFiles('lambdas/schema_service/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-test-schema-service-
-
-      - run: cd lambdas/schema_service && cargo check
-      - run: cd lambdas/schema_service && cargo test
-
-  # 2. Build Lambda (Docker for ONNX Runtime compatibility)
+  # 1. Build Lambda (Docker for ONNX Runtime compatibility)
+  #
+  # Clippy + unit tests for the Lambda handler run in the schema_service
+  # submodule's own CI (EdgeVector/schema_service -> .github/workflows/
+  # ci.yml) so we don't re-run them here. This job's only job is to
+  # assemble the deployable Lambda zip + fastembed Layer asset.
   build:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Clone fold_db dependency
         run: |
-          git clone --depth 1 --branch mainline https://github.com/shiba4life/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
+          git clone --depth 1 --branch mainline https://github.com/EdgeVector/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
           mkdir -p "$GITHUB_WORKSPACE/../fold_db/src/server/static-react/dist"
 
       - uses: actions/cache@v4
         with:
           path: |
-            lambdas/schema_service/.docker-cargo/registry/
-            lambdas/schema_service/.docker-cargo/git/
-          key: ${{ runner.os }}-docker-build-${{ hashFiles('lambdas/schema_service/Cargo.lock') }}
+            .docker-cache/cargo/registry/
+            .docker-cache/cargo/git/
+            schema_service/target/
+          key: ${{ runner.os }}-docker-build-${{ hashFiles('schema_service/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-docker-build-
 
-      - name: Build Lambda in Docker (AL2023)
-        run: cd lambdas/schema_service && ./build.sh release
+      - name: Build Lambda + fastembed Layer
+        run: ./build.sh release
 
       - uses: actions/upload-artifact@v4
         with:
           name: lambda-schema-service
-          path: lambdas/schema_service/target/lambda/schema_service-extracted/
+          path: schema_service/target/lambda/server_lambda-extracted/
           retention-days: 1
 
       # Model + tokenizer files ship as a separate Lambda Layer so the
@@ -73,10 +52,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lambda-fastembed-layer
-          path: lambdas/schema_service/target/lambda/fastembed_layer/
+          path: target/fastembed_layer/
           retention-days: 1
 
-  # 3. Deploy to Dev
+  # 2. Deploy to Dev
   deploy-dev:
     needs: build
     runs-on: ubuntu-latest
@@ -98,13 +77,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: lambda-schema-service
-          path: lambdas/schema_service/target/lambda/schema_service-extracted/
+          path: schema_service/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
         uses: actions/download-artifact@v4
         with:
           name: lambda-fastembed-layer
-          path: lambdas/schema_service/target/lambda/fastembed_layer/
+          path: target/fastembed_layer/
 
       - uses: actions/setup-node@v4
         with:
@@ -131,7 +110,7 @@ jobs:
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "Dev API URL: $API_URL"
 
-  # 4. Smoke Test Dev
+  # 3. Smoke Test Dev
   smoke-test-dev:
     needs: deploy-dev
     runs-on: ubuntu-latest
@@ -180,7 +159,7 @@ jobs:
       - name: Smoke tests passed
         run: echo "All dev smoke tests passed"
 
-  # 5. Deploy to Prod
+  # 4. Deploy to Prod
   deploy-prod:
     needs: smoke-test-dev
     runs-on: ubuntu-latest
@@ -200,13 +179,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: lambda-schema-service
-          path: lambdas/schema_service/target/lambda/schema_service-extracted/
+          path: schema_service/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
         uses: actions/download-artifact@v4
         with:
           name: lambda-fastembed-layer
-          path: lambdas/schema_service/target/lambda/fastembed_layer/
+          path: target/fastembed_layer/
 
       - uses: actions/setup-node@v4
         with:
