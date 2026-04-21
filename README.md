@@ -97,14 +97,24 @@ Deploy to Vercel or another static hosting service.
 
 ## API Endpoints
 
-| Method | Path                     | Description                              |
-| ------ | ------------------------ | ---------------------------------------- |
-| GET    | `/health`                | Health check                             |
-| GET    | `/api/schemas`           | List schema names                        |
-| GET    | `/api/schemas/available` | Get all schemas with definitions         |
-| GET    | `/api/schema/{name}`     | Get specific schema                      |
-| POST   | `/api/schemas`           | Register / propose schema                |
-| GET    | `/api/canonical-fields`  | List all builtin canonical fields (~150) |
+The Lambda serves the full `/v1/*` surface — 19 endpoints covering
+schemas, views, transforms, and system. See the canonical list in
+[`schema_service/README.md`](https://github.com/EdgeVector/schema_service/blob/main/README.md#http-surface-v1)
+or the machine-readable spec at
+[`schema_service/openapi.yaml`](https://github.com/EdgeVector/schema_service/blob/main/openapi.yaml).
+
+A few representative routes:
+
+| Method | Path                         | Description                              |
+| ------ | ---------------------------- | ---------------------------------------- |
+| GET    | `/v1/health`                 | Health check                             |
+| GET    | `/v1/schemas`                | List schema names                        |
+| GET    | `/v1/schemas/available`      | Get all schemas with definitions         |
+| GET    | `/v1/schema/{name}`          | Get a specific schema                    |
+| POST   | `/v1/schemas`                | Register / propose a schema              |
+| POST   | `/v1/schemas/batch-check-reuse` | Batch reuse-check for proposed schemas |
+| GET    | `/v1/views`                  | List view names                          |
+| GET    | `/v1/transforms`             | List transform records                   |
 
 ## Environment Variables
 
@@ -121,7 +131,7 @@ Schemas are stored in S3 as individual JSON blobs:
 s3://<SCHEMAS_BUCKET>/schemas/<schema_name>.json
 ```
 
-The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the local/self-hosted binary in `fold_db_node/src/bin/schema_service.rs` uses `SledSchemaPersistence` (port 9002, for development and self-hosted deployments).
+The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the dev binary in [`schema_service/crates/server_http/`](https://github.com/EdgeVector/schema_service/tree/main/crates/server_http) uses `SledSchemaPersistence` (default port 9102, for local development).
 
 ## fastembed Lambda Layer
 
