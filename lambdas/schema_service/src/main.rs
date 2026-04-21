@@ -238,7 +238,7 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
     // Route handling based on path
     match (method, path) {
         // Health check
-        ("GET", "/health") | ("GET", "/api/health") => json_response(
+        ("GET", "/health") | ("GET", "/api/health") | ("GET", "/v1/health") => json_response(
             200,
             json!({
                 "status": "healthy",
@@ -249,7 +249,7 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         // ============== Schema Endpoints ==============
 
         // List schema names
-        ("GET", "/api/schemas") => match state.get_schema_names() {
+        ("GET", "/api/schemas") | ("GET", "/v1/schemas") => match state.get_schema_names() {
             Ok(schema_names) => json_response(200, json!({ "schemas": schema_names })),
             Err(e) => json_response(
                 500,
@@ -258,17 +258,26 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         },
 
         // Get all schemas with definitions
-        ("GET", "/api/schemas/available") => match state.get_all_schemas_cached() {
-            Ok(schemas) => json_response(200, json!({ "schemas": schemas })),
-            Err(e) => json_response(
-                500,
-                json!({"error": format!("Failed to get schemas: {}", e)}),
-            ),
-        },
+        ("GET", "/api/schemas/available") | ("GET", "/v1/schemas/available") => {
+            match state.get_all_schemas_cached() {
+                Ok(schemas) => json_response(200, json!({ "schemas": schemas })),
+                Err(e) => json_response(
+                    500,
+                    json!({"error": format!("Failed to get schemas: {}", e)}),
+                ),
+            }
+        }
 
         // Find similar schemas
-        (method, path) if method == "GET" && path.starts_with("/api/schemas/similar/") => {
-            let schema_name = path.trim_start_matches("/api/schemas/similar/");
+        (method, path)
+            if method == "GET"
+                && (path.starts_with("/api/schemas/similar/")
+                    || path.starts_with("/v1/schemas/similar/")) =>
+        {
+            let schema_name = path
+                .strip_prefix("/api/schemas/similar/")
+                .or_else(|| path.strip_prefix("/v1/schemas/similar/"))
+                .unwrap_or("");
             let threshold: f64 = event
                 .uri()
                 .query()
@@ -312,17 +321,22 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         // Get specific schema (singular /api/schema/{name} or plural /api/schemas/{name})
         (method, path)
             if method == "GET"
-                && (path.starts_with("/api/schema/") || path.starts_with("/api/schemas/")) =>
+                && (path.starts_with("/api/schema/")
+                    || path.starts_with("/api/schemas/")
+                    || path.starts_with("/v1/schema/")
+                    || path.starts_with("/v1/schemas/")) =>
         {
             let schema_name = path
                 .strip_prefix("/api/schemas/")
                 .or_else(|| path.strip_prefix("/api/schema/"))
+                .or_else(|| path.strip_prefix("/v1/schemas/"))
+                .or_else(|| path.strip_prefix("/v1/schema/"))
                 .unwrap_or("");
             get_schema_by_name(&state, schema_name)
         }
 
         // Add schema (POST)
-        ("POST", "/api/schemas") => {
+        ("POST", "/api/schemas") | ("POST", "/v1/schemas") => {
             let body = match parse_body(&event) {
                 Ok(b) => b,
                 Err(r) => return Ok(r),
@@ -395,7 +409,10 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         }
 
         // Reload schemas
-        ("POST", "/api/schemas/reload") => match state.load_schemas().await {
+        ("POST", "/api/schemas/reload") | ("POST", "/v1/schemas/reload") => match state
+            .load_schemas()
+            .await
+        {
             Ok(_) => {
                 let count = state.get_schema_count();
                 json_response(
@@ -413,7 +430,7 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         // ============== View Endpoints ==============
 
         // List view names
-        ("GET", "/api/views") => match state.get_view_names() {
+        ("GET", "/api/views") | ("GET", "/v1/views") => match state.get_view_names() {
             Ok(names) => json_response(200, json!({ "views": names })),
             Err(e) => json_response(
                 500,
@@ -422,14 +439,24 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         },
 
         // Get all views with definitions
-        ("GET", "/api/views/available") => match state.get_all_views() {
-            Ok(views) => json_response(200, json!({ "views": views })),
-            Err(e) => json_response(500, json!({"error": format!("Failed to get views: {}", e)})),
-        },
+        ("GET", "/api/views/available") | ("GET", "/v1/views/available") => {
+            match state.get_all_views() {
+                Ok(views) => json_response(200, json!({ "views": views })),
+                Err(e) => {
+                    json_response(500, json!({"error": format!("Failed to get views: {}", e)}))
+                }
+            }
+        }
 
         // Get specific view
-        (method, path) if method == "GET" && path.starts_with("/api/view/") => {
-            let view_name = path.trim_start_matches("/api/view/");
+        (method, path)
+            if method == "GET"
+                && (path.starts_with("/api/view/") || path.starts_with("/v1/view/")) =>
+        {
+            let view_name = path
+                .strip_prefix("/api/view/")
+                .or_else(|| path.strip_prefix("/v1/view/"))
+                .unwrap_or("");
             get_view_by_name(&state, view_name)
         }
 
@@ -442,7 +469,7 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
         // classification, and flagged for manual review when they don't.
 
         // Register a view (POST)
-        ("POST", "/api/views") => {
+        ("POST", "/api/views") | ("POST", "/v1/views") => {
             let body = match parse_body(&event) {
                 Ok(b) => b,
                 Err(r) => return Ok(r),
@@ -500,18 +527,19 @@ async fn function_handler(event: Request) -> Result<Response<Body>, Error> {
             json!({
                 "service": "FoldDB Schema & View Registry",
                 "version": "2.0.0",
+                "path_prefixes": ["/v1", "/api"],
                 "endpoints": {
                     "GET /health": "Health check",
-                    "GET /api/schemas": "List schema names",
-                    "GET /api/schemas/available": "Get all schemas with definitions",
-                    "GET /api/schemas/similar/{name}?threshold=0.5": "Find similar schemas",
-                    "GET /api/schema/{name}": "Get specific schema",
-                    "POST /api/schemas": "Add new schema",
-                    "POST /api/schemas/reload": "Reload schemas from storage",
-                    "GET /api/views": "List view names",
-                    "GET /api/views/available": "Get all views with definitions",
-                    "GET /api/view/{name}": "Get specific view",
-                    "POST /api/views": "Register a new view"
+                    "GET /v1/schemas": "List schema names",
+                    "GET /v1/schemas/available": "Get all schemas with definitions",
+                    "GET /v1/schemas/similar/{name}?threshold=0.5": "Find similar schemas",
+                    "GET /v1/schema/{name}": "Get specific schema",
+                    "POST /v1/schemas": "Add new schema",
+                    "POST /v1/schemas/reload": "Reload schemas from storage",
+                    "GET /v1/views": "List view names",
+                    "GET /v1/views/available": "Get all views with definitions",
+                    "GET /v1/view/{name}": "Get specific view",
+                    "POST /v1/views": "Register a new view"
                 }
             }),
         ),
