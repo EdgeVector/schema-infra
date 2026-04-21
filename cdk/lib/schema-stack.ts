@@ -179,77 +179,99 @@ export class SchemaServiceStack extends Stack {
       ),
     });
 
-    // REST API endpoints
-    httpApi.addRoutes({
-      path: "/api/schemas",
-      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaListIntegration",
-        schemaServiceFn,
-      ),
-    });
+    // =====================================================
+    // Route definitions
+    //
+    // Every public path is registered under BOTH /api/* and /v1/*.
+    // Phase 0 of the schema_service extraction introduced /v1/* as the
+    // canonical prefix; /api/* stays in place for the transition and is
+    // dropped in Phase 1 when this Lambda is absorbed into the
+    // schema_service repo. The Lambda handler (main.rs) matches either
+    // prefix to the same dispatch arm, so only the API Gateway routing
+    // needs to be duplicated here.
+    // =====================================================
+    const schemaPaths: Array<{
+      api: string;
+      v1: string;
+      methods: apigwv2.HttpMethod[];
+      integrationId: string;
+    }> = [
+      {
+        api: "/api/schemas",
+        v1: "/v1/schemas",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "SchemaListIntegration",
+      },
+      {
+        api: "/api/schemas/available",
+        v1: "/v1/schemas/available",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaAvailableIntegration",
+      },
+      {
+        api: "/api/schemas/similar/{schemaId}",
+        v1: "/v1/schemas/similar/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaSimilarIntegration",
+      },
+      {
+        api: "/api/schemas/{schemaId}",
+        v1: "/v1/schemas/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaGetIntegration",
+      },
+      {
+        // Singular /schema/{schemaId} used by FoldDB client
+        api: "/api/schema/{schemaId}",
+        v1: "/v1/schema/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaGetSingularIntegration",
+      },
+      {
+        api: "/api/views",
+        v1: "/v1/views",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "ViewListIntegration",
+      },
+      {
+        api: "/api/views/available",
+        v1: "/v1/views/available",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ViewAvailableIntegration",
+      },
+      {
+        api: "/api/view/{viewId}",
+        v1: "/v1/view/{viewId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ViewGetIntegration",
+      },
+    ];
 
+    for (const route of schemaPaths) {
+      httpApi.addRoutes({
+        path: route.api,
+        methods: route.methods,
+        integration: new apigwv2Integrations.HttpLambdaIntegration(
+          route.integrationId,
+          schemaServiceFn,
+        ),
+      });
+      httpApi.addRoutes({
+        path: route.v1,
+        methods: route.methods,
+        integration: new apigwv2Integrations.HttpLambdaIntegration(
+          `${route.integrationId}V1`,
+          schemaServiceFn,
+        ),
+      });
+    }
+
+    // /v1/health alongside the existing /health route.
     httpApi.addRoutes({
-      path: "/api/schemas/available",
+      path: "/v1/health",
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaAvailableIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    httpApi.addRoutes({
-      path: "/api/schemas/similar/{schemaId}",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaSimilarIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    httpApi.addRoutes({
-      path: "/api/schemas/{schemaId}",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaGetIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    // Support singular /api/schema/{schemaId} used by FoldDB client
-    httpApi.addRoutes({
-      path: "/api/schema/{schemaId}",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaGetSingularIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    // View endpoints
-    httpApi.addRoutes({
-      path: "/api/views",
-      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "ViewListIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    httpApi.addRoutes({
-      path: "/api/views/available",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "ViewAvailableIntegration",
-        schemaServiceFn,
-      ),
-    });
-
-    httpApi.addRoutes({
-      path: "/api/view/{viewId}",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "ViewGetIntegration",
+        "SchemaHealthIntegrationV1",
         schemaServiceFn,
       ),
     });
