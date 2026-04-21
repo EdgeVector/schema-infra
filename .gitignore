@@ -34,3 +34,12 @@ bootstrap
 # Docker build caches
 .docker-cargo/
 .docker-rustup/
+.docker-cache/
+
+# schema_service submodule build artifacts (not tracked by the submodule
+# either; kept here so `git status` in schema-infra stays clean).
+schema_service/target/
+
+# Workspace fold_db is bind-mounted into this path by build.sh inside
+# Docker; suppress any host-side directory that docker may leave behind.
+fold_db/

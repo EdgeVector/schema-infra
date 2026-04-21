@@ -1,0 +1,4 @@
+[submodule "schema_service"]
+	path = schema_service
+	url = https://github.com/EdgeVector/schema_service.git
+	branch = main
