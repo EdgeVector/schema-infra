@@ -4,6 +4,7 @@ import {
   Duration,
   CfnOutput,
   RemovalPolicy,
+  Size,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -12,6 +13,10 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as path from "path";
 
 export interface SchemaServiceStackProps extends StackProps {
   environment?: string; // 'dev' or 'prod'
@@ -353,6 +358,191 @@ export class SchemaServiceStack extends Stack {
         ),
       });
     }
+
+    // =====================================================
+    // Async compile worker — DynamoDB jobs table, SQS queue, DLQ.
+    //
+    // See `projects/transform-worker-split` in gbrain for the full
+    // design. The request-path Lambda enqueues a compile job on the
+    // SQS queue; the worker (below) pulls the job, runs the real
+    // Rust → WASM compile outside the 29s API Gateway timeout, and
+    // writes the terminal status to the jobs table. Clients poll the
+    // job by `job_id = source_hash`.
+    //
+    // All three resources are created together — they're a single
+    // cohesive async pipeline and splitting them into separate stacks
+    // would force cross-stack ARN exports for no gain.
+    // =====================================================
+
+    // DynamoDB table for per-job terminal status.
+    //
+    // Schema:
+    //   PK:         job_id        (String, = SHA-256 of rust_source)
+    //   status:     Succeeded | CompileFailed | CompileTimeout |
+    //               InvalidOutputShape | TransformPanicked
+    //   record:     JSON-serialized TransformRecord (on Succeeded only)
+    //   error_message: free-text detail (on failure only)
+    //   updated_at: epoch seconds
+    //   ttl:        epoch seconds — 24h after updated_at
+    //
+    // `job_id` = source-hash gives deterministic atomic dedup via
+    // conditional put — SQS redelivery after a successful first
+    // commit is a no-op. TTL is enabled so orphan rows (from the
+    // "SQS send fails after DynamoDB put" failure mode documented in
+    // the plan) self-clean.
+    const transformJobsTable = new dynamodb.Table(this, "TransformJobsTable", {
+      tableName: `transform-jobs-${envName}`,
+      partitionKey: {
+        name: "job_id",
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "ttl",
+      // Dev can be torn down and rebuilt; prod is RETAIN because we
+      // don't want an accidental `cdk destroy` to wipe live job history.
+      removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    // Dead-letter queue for messages that infra-fail on the worker.
+    //
+    // The main queue's redrive policy routes messages here after
+    // maxReceiveCount=3. Terminal user-facing failures (CompileFailed,
+    // InvalidOutputShape, …) are handled inside the worker and NEVER
+    // reach the DLQ — only infra flukes (DynamoDB 5xx, malformed
+    // record) do.
+    //
+    // 14-day retention so an operator has time to inspect and replay
+    // failed jobs after a multi-day outage. Matches AWS SQS default
+    // retention.
+    const transformCompileDlq = new sqs.Queue(this, "TransformCompileDLQ", {
+      queueName: `transform-compile-dlq-${envName}`,
+      retentionPeriod: Duration.days(14),
+      removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    // Main compile queue.
+    //
+    // - visibilityTimeout=120s: the worker's cold-start + cargo build
+    //   comfortably completes within 90s on warm image; doubling it
+    //   leaves headroom for a slow outlier before SQS redelivers.
+    // - maxReceiveCount=3: two retries after the first delivery.
+    //   Third failure routes to DLQ.
+    // - Message retention 4 days: generous enough that a weekend-scale
+    //   outage doesn't lose in-flight jobs to the queue retention.
+    const transformCompileQueue = new sqs.Queue(this, "TransformCompileQueue", {
+      queueName: `transform-compile-${envName}`,
+      visibilityTimeout: Duration.seconds(120),
+      retentionPeriod: Duration.days(4),
+      deadLetterQueue: {
+        queue: transformCompileDlq,
+        maxReceiveCount: 3,
+      },
+      removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
+    // Request-path Lambda needs to SendMessage to the queue (when
+    // POST /v1/transforms enqueues a compile job) and PutItem on the
+    // jobs table (for the initial Pending row — the worker later
+    // conditionally updates to a terminal status).
+    transformCompileQueue.grantSendMessages(schemaServiceFn);
+    transformJobsTable.grantReadWriteData(schemaServiceFn);
+    schemaServiceFn.addEnvironment(
+      "TRANSFORM_COMPILE_QUEUE_URL",
+      transformCompileQueue.queueUrl,
+    );
+    schemaServiceFn.addEnvironment(
+      "TRANSFORM_JOBS_TABLE",
+      transformJobsTable.tableName,
+    );
+
+    // =====================================================
+    // Compile worker — DockerImageFunction
+    //
+    // The worker runs `cargo build --target wasm32-unknown-unknown`
+    // on user-submitted Rust source. That requires cargo, rustc, and
+    // a prewarmed serde+serde_json registry in the image — which
+    // doesn't fit in a Lambda zip. Container images do.
+    //
+    // Image source: `schema_service/crates/worker/Dockerfile` in the
+    // vendored submodule. `lambda.DockerImageCode.fromImageAsset(...)`
+    // points at the whole schema_service repo so the Dockerfile's
+    // `COPY . .` has access to every crate in the workspace.
+    //
+    // Memory 4GB + ephemeral 10GB to accommodate cargo builds. Reserved
+    // concurrency 5 so a thundering herd of compile requests can't
+    // exhaust our AWS account's Lambda pool — compile jobs bucket
+    // behind the queue instead.
+    // =====================================================
+    const compileWorkerFn = new lambda.DockerImageFunction(
+      this,
+      "TransformCompileWorkerFn",
+      {
+        functionName: `transform-compile-worker-${envName}`,
+        code: lambda.DockerImageCode.fromImageAsset(
+          path.join(__dirname, "../../schema_service"),
+          {
+            file: "crates/worker/Dockerfile",
+            // The build.sh pipeline runs the Dockerfile against the
+            // whole workspace so the worker crate can resolve its
+            // `fold_db = { workspace = ... }` + sibling crate paths.
+          },
+        ),
+        memorySize: 4096,
+        ephemeralStorageSize: Size.gibibytes(10),
+        timeout: Duration.seconds(300),
+        reservedConcurrentExecutions: 5,
+        environment: {
+          RUST_LOG: "info",
+          // Same S3 bucket as the request-path Lambda — the worker
+          // writes wasm/{hash}.wasm + source/{hash}.rs + transforms.json
+          // atomically there, which the request-path Lambda's later
+          // reads see via the shared blob store.
+          SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
+          TRANSFORM_JOBS_TABLE: transformJobsTable.tableName,
+          ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
+        },
+      },
+    );
+
+    // Worker permissions: read/write the schema bucket (wasm + source
+    // + transforms.json), write terminal status to the jobs table,
+    // read/delete messages on the compile queue, and read the
+    // Anthropic API key secret (same classification path as the
+    // request-path Lambda).
+    schemaBucket.grantReadWrite(compileWorkerFn);
+    transformJobsTable.grantReadWriteData(compileWorkerFn);
+    anthropicApiKey.grantRead(compileWorkerFn);
+
+    // Wire the queue as an event source. `batchSize=1` because each
+    // compile job is heavy-weight; batching would mean a single
+    // compile failure redelivers every job in the batch.
+    compileWorkerFn.addEventSource(
+      new lambdaEventSources.SqsEventSource(transformCompileQueue, {
+        batchSize: 1,
+        // Don't report individual item failures — the worker handles
+        // terminal user-facing outcomes inside and only throws on
+        // infra errors, which SQS routes to DLQ via the redrive policy.
+        reportBatchItemFailures: false,
+      }),
+    );
+
+    new CfnOutput(this, "TransformJobsTableName", {
+      value: transformJobsTable.tableName,
+      description: "DynamoDB table name for async compile job status",
+    });
+    new CfnOutput(this, "TransformCompileQueueUrl", {
+      value: transformCompileQueue.queueUrl,
+      description: "SQS queue URL for async compile job messages",
+    });
+    new CfnOutput(this, "TransformCompileDLQUrl", {
+      value: transformCompileDlq.queueUrl,
+      description:
+        "SQS dead-letter queue URL — messages here need operator attention",
+    });
+    new CfnOutput(this, "TransformCompileWorkerFunctionName", {
+      value: compileWorkerFn.functionName,
+      description: "Lambda function name for the async compile worker",
+    });
 
     // =====================================================
     // Custom Domain (schema.folddb.com) — prod only
