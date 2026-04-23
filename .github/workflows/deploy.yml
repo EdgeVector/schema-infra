@@ -157,8 +157,30 @@ jobs:
             exit 1
           fi
 
+      # `projects/transform-worker-split` Lane E post-deploy smoke:
+      # end-to-end exercise of the async compile worker. Posts a
+      # minimal Rust source, polls GET /v1/transform-jobs/{id} until
+      # the worker commits, validates the final TransformRecord.
+      # Until the schema-infra submodule pointer bumps past MDT-E
+      # (commit 4622640), the deployed Lambda still serves the legacy
+      # `wasm_bytes` API and this step will exit 1 with a crisp
+      # "missing field wasm_bytes" message — that's the baseline
+      # signal that the worker split hasn't deployed yet.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            test/e2e
+          sparse-checkout-cone-mode: false
+      - name: Smoke test - transform async compile flow
+        env:
+          API_URL: ${{ env.API_URL }}
+          TIMEOUT_SECS: "180"
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          bash test/e2e/transform-async-flow.sh
+
       - name: Smoke tests passed
-        run: echo "All dev smoke tests passed"
+        run: echo "All dev smoke tests passed (health + schemas + views + transform async flow)"
 
   # 4. Deploy to Prod
   deploy-prod:
