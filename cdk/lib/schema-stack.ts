@@ -422,16 +422,21 @@ export class SchemaServiceStack extends Stack {
 
     // Main compile queue.
     //
-    // - visibilityTimeout=120s: the worker's cold-start + cargo build
-    //   comfortably completes within 90s on warm image; doubling it
-    //   leaves headroom for a slow outlier before SQS redelivers.
+    // - visibilityTimeout=360s: AWS requires SQS visibility to be >=
+    //   the Lambda function timeout for any SQS event source mapping.
+    //   Worker function timeout is 300s (fold_db_node/compile_worker
+    //   below), so visibility must exceed that. 360s = 300s function
+    //   cap + 60s headroom so SQS doesn't redeliver while the worker
+    //   is still processing a slow outlier. The original 120s value
+    //   from the plan (below function cap) fails CloudFormation with
+    //   "Queue visibility timeout X is less than Function timeout Y".
     // - maxReceiveCount=3: two retries after the first delivery.
     //   Third failure routes to DLQ.
     // - Message retention 4 days: generous enough that a weekend-scale
     //   outage doesn't lose in-flight jobs to the queue retention.
     const transformCompileQueue = new sqs.Queue(this, "TransformCompileQueue", {
       queueName: `transform-compile-${envName}`,
-      visibilityTimeout: Duration.seconds(120),
+      visibilityTimeout: Duration.seconds(360),
       retentionPeriod: Duration.days(4),
       deadLetterQueue: {
         queue: transformCompileDlq,
