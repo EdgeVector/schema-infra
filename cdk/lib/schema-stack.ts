@@ -346,6 +346,16 @@ export class SchemaServiceStack extends Stack {
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "TransformWasmIntegrationV1",
       },
+      {
+        // `projects/transform-worker-split` Lane A T4: async compile
+        // job status endpoint. Client POSTs /v1/transforms, gets
+        // 202 + job_id, polls here until Succeeded / failure. Lambda
+        // dispatch arm matches `/v1/transform-jobs/...` and reads
+        // the DynamoDB transform-jobs row.
+        path: "/v1/transform-jobs/{jobId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "TransformJobStatusIntegrationV1",
+      },
     ];
 
     for (const route of v1OnlyRoutes) {
