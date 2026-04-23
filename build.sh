@@ -12,6 +12,13 @@
 #   4. Download the fastembed model files into `target/fastembed_layer/`
 #      (at schema-infra repo root). CDK reads this via Code.fromAsset.
 #
+# Note: the async compile worker (`transform-compile-worker-${envName}`)
+# is packaged as a Docker container image, built directly by the CDK
+# deploy via `DockerImageCode.fromImageAsset(...)` pointed at
+# `schema_service/crates/worker/Dockerfile`. No pre-build step here —
+# `cdk deploy` runs `docker build` as part of asset publishing. See
+# `projects/transform-worker-split` in gbrain for rationale.
+#
 # Usage:
 #   ./build.sh                    # release build
 #   ./build.sh dev-release        # faster iteration profile
