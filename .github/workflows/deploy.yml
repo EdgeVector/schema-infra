@@ -23,13 +23,14 @@ jobs:
         with:
           submodules: recursive
           # schema-infra is public but its `schema_service/` submodule is
-          # private; the submodule checkout needs a token with access to
-          # EdgeVector/schema_service. The repo has `GPAT` as the
-          # canonical private-repo PAT; the `PRIVATE_DEPS_TOKEN` name used
-          # by schema_service's own CI isn't provisioned here. Falling
-          # back to GPAT keeps the auth story consistent with how other
-          # workflows in this repo read the secret.
-          token: ${{ secrets.GPAT }}
+          # private. The submodule checkout needs a token with access to
+          # EdgeVector/schema_service. `GH_PAT` is the EdgeVector
+          # org-level secret provisioned for private-submodule checkouts
+          # across workflows (confirmed by operator 2026-04-23); the
+          # previous `PRIVATE_DEPS_TOKEN` name (carried over from
+          # schema_service's own CI) and the local-repo `GPAT` secret
+          # are both unprovisioned here.
+          token: ${{ secrets.GH_PAT }}
 
       - name: Clone fold_db dependency
         run: |
