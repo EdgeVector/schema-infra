@@ -151,8 +151,8 @@ jobs:
 
       - name: Smoke test - list schemas
         run: |
-          echo "Testing: GET $API_URL/api/schemas"
-          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/api/schemas" --max-time 30)
+          echo "Testing: GET $API_URL/v1/schemas"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/v1/schemas" --max-time 30)
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | head -1)
           echo "HTTP $HTTP_CODE: $BODY"
@@ -163,8 +163,8 @@ jobs:
 
       - name: Smoke test - list views
         run: |
-          echo "Testing: GET $API_URL/api/views"
-          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/api/views" --max-time 30)
+          echo "Testing: GET $API_URL/v1/views"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/v1/views" --max-time 30)
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | head -1)
           echo "HTTP $HTTP_CODE: $BODY"
