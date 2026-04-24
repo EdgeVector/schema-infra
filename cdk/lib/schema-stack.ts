@@ -421,6 +421,39 @@ export class SchemaServiceStack extends Stack {
       removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
 
+    // Embeddings table. Single table, two kinds share via partition key:
+    //   PK `kind` (S) = "descriptive_name" | "canonical_field"
+    //   SK `key`  (S) = schema identity_hash | canonical field name
+    //
+    // Write path (add_schema / add_canonical_field) PutItems one row
+    // per new embedding. Cold start Queries per kind, paginated 1MB
+    // pages. O(1) writes vs. the single-blob S3 approach that RMW'd
+    // the whole blob on every update — see schema_service #46.
+    //
+    // PAY_PER_REQUEST: at current volume (dozens of writes per day,
+    // one cold-start Query pair per Lambda cold start) on-demand
+    // billing is a few cents per month, simpler than capacity
+    // planning. Revisit if per-minute traffic ever exceeds
+    // ~10 writes/sec sustained.
+    const embeddingsTable = new dynamodb.Table(this, "SchemaEmbeddingsTable", {
+      tableName: `schema-embeddings-${envName}`,
+      partitionKey: {
+        name: "kind",
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: "key",
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      // Dev is DESTROY so a stack teardown doesn't leave orphan tables.
+      // Prod is RETAIN — embeddings are cheap to recompute but mostly
+      // free to keep around, and accidental destroy would force every
+      // cold start to re-embed until the warm-embeddings backfill
+      // re-ran.
+      removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+    });
+
     // Dead-letter queue for messages that infra-fail on the worker.
     //
     // The main queue's redrive policy routes messages here after
@@ -469,6 +502,10 @@ export class SchemaServiceStack extends Stack {
     // conditionally updates to a terminal status).
     transformCompileQueue.grantSendMessages(schemaServiceFn);
     transformJobsTable.grantReadWriteData(schemaServiceFn);
+    // Request-path Lambda reads + writes the embeddings table:
+    // PutItem on every `add_schema` / `add_canonical_field`, Query
+    // on cold start to populate the in-memory cache.
+    embeddingsTable.grantReadWriteData(schemaServiceFn);
     schemaServiceFn.addEnvironment(
       "TRANSFORM_COMPILE_QUEUE_URL",
       transformCompileQueue.queueUrl,
@@ -476,6 +513,10 @@ export class SchemaServiceStack extends Stack {
     schemaServiceFn.addEnvironment(
       "TRANSFORM_JOBS_TABLE",
       transformJobsTable.tableName,
+    );
+    schemaServiceFn.addEnvironment(
+      "SCHEMA_EMBEDDINGS_TABLE",
+      embeddingsTable.tableName,
     );
 
     // =====================================================
@@ -522,6 +563,13 @@ export class SchemaServiceStack extends Stack {
           // reads see via the shared blob store.
           SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
           TRANSFORM_JOBS_TABLE: transformJobsTable.tableName,
+          // Worker doesn't call embedding methods today, but its
+          // `S3BlobPersistence::new` takes the table name
+          // unconditionally and will panic on startup if the env var
+          // is missing. Pass the same name as the request-path Lambda
+          // — no grant required since the worker never reads/writes
+          // the table.
+          SCHEMA_EMBEDDINGS_TABLE: embeddingsTable.tableName,
           ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
         },
       },
