@@ -364,6 +364,17 @@ export class SchemaServiceStack extends Stack {
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "TransformJobStatusIntegrationV1",
       },
+      {
+        // Admin one-shot: backfill embeddings for every schema and
+        // canonical field that doesn't yet have a persisted embedding
+        // in the `schema-embeddings-${env}` DynamoDB table. Idempotent
+        // — subsequent calls skip already-persisted entries and return
+        // counts of computed + skipped per kind. Hit once after first
+        // deploying the DDB-backed embedding store (schema_service #46).
+        path: "/v1/admin/warm-embeddings",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "AdminWarmEmbeddingsIntegrationV1",
+      },
     ];
 
     for (const route of v1OnlyRoutes) {
