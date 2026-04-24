@@ -134,14 +134,6 @@ export class SchemaServiceStack extends Stack {
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
         SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
-        // Bypass the Schema.org starter seed on cold start — runs
-        // ~1000 S3 round-trips, blows past Lambda's 10s init phase
-        // cap, and makes every cold start return 503 until the seed
-        // converges over many cycles. Another workstream owns the
-        // proper marker-file fix; this env var keeps the async
-        // compile worker deploy unblocked in the meantime. Remove
-        // (or set to "0") once that lands.
-        SKIP_STARTER_SEED: "1",
       },
     });
 
