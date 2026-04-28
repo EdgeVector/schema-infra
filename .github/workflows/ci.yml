@@ -26,7 +26,15 @@ jobs:
       run:
         working-directory: cdk
     steps:
+      # Init the schema_service submodule so the worker Dockerfile path
+      # used by `DockerImageCode.fromImageAsset(...)` exists at synth
+      # time. The Docker image is only built at deploy time, but synth
+      # validates the source path exists. The default GITHUB_TOKEN
+      # cannot clone private org repos, so use GH_PAT (org-level token).
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.GH_PAT }}
 
       - uses: actions/setup-node@v4
         with:
@@ -39,6 +47,19 @@ jobs:
 
       - name: TypeScript compile
         run: npx tsc --noEmit
+
+      # `cdk synth` validates that every `Code.fromAsset(path)` resolves to
+      # an existing directory. Two of those paths are produced by `build.sh`
+      # at deploy time (Docker AL2023 build + Hugging Face download), which
+      # CI doesn't run. Drop placeholder directories so synth can construct
+      # the stack — synth doesn't read their contents.
+      - name: Pre-create asset placeholders for synth
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p target/fastembed_layer
+          touch target/fastembed_layer/.synth-placeholder
+          mkdir -p schema_service/target/lambda/server_lambda-extracted
+          touch schema_service/target/lambda/server_lambda-extracted/.synth-placeholder
 
       - name: CDK synth (dev environment)
         env:
