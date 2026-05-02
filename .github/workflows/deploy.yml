@@ -26,10 +26,8 @@ jobs:
           # private. The submodule checkout needs a token with access to
           # EdgeVector/schema_service. `GH_PAT` is the EdgeVector
           # org-level secret provisioned for private-submodule checkouts
-          # across workflows (confirmed by operator 2026-04-23); the
-          # previous `PRIVATE_DEPS_TOKEN` name (carried over from
-          # schema_service's own CI) and the local-repo `GPAT` secret
-          # are both unprovisioned here.
+          # across workflows; the local-repo `GPAT` secret is not
+          # provisioned here.
           token: ${{ secrets.GH_PAT }}
 
       - name: Clone fold_db dependency
