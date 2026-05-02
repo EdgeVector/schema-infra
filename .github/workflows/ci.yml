@@ -16,10 +16,24 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # Path-filter once for the whole workflow. The `cdk` job below gates
+  # on the `cdk` output so a docs-only PR skips the synth + typecheck
+  # cycle. The reusable workflow lives in EdgeVector/.github (see
+  # check-paths.yml for category definitions). `secrets: inherit`
+  # matches the org pattern set by auto-merge.yml. Branch-protection
+  # contract: ci-required tolerates `skipped` so docs-only PRs still
+  # produce a green required check.
+  changes:
+    uses: EdgeVector/.github/.github/workflows/check-paths.yml@main
+    secrets: inherit
+
   cdk:
     name: CDK synth + typecheck
+    needs: changes
+    if: needs.changes.outputs.cdk == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -74,7 +88,7 @@ jobs:
   # across all repos.
   ci-required:
     name: ci-required
-    needs: [cdk]
+    needs: [changes, cdk]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -84,9 +98,9 @@ jobs:
         run: |
           echo "Required job results: $RESULTS"
           for r in ${RESULTS//,/ }; do
-            if [ "$r" != "success" ]; then
-              echo "::error::A required job did not succeed (result: $r)"
-              exit 1
-            fi
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::A required job did not succeed (result: $r)"; exit 1 ;;
+            esac
           done
           echo "All required jobs passed."
