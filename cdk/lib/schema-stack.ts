@@ -3,6 +3,7 @@ import {
   StackProps,
   Duration,
   CfnOutput,
+  Fn,
   RemovalPolicy,
   Size,
 } from "aws-cdk-lib";
@@ -12,6 +13,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -367,6 +369,20 @@ export class SchemaServiceStack extends Stack {
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "AdminWarmEmbeddingsIntegrationV1",
       },
+      {
+        // Auth-gated registry export. Lambda validates `X-API-Key`
+        // against the cross-stack-imported `ApiKeys` DynamoDB table
+        // (see the cross-stack auth wire above) and returns a
+        // `SnapshotEnvelope` on success. Drives the dev-binary
+        // `--hydrate-from https://schema.folddb.com` flow per
+        // `projects/schema-service-dev-hydration`. The dev-only
+        // `POST /v1/snapshot/import` is intentionally NOT mounted —
+        // Lambda storage is S3-backed (External), and the importer is
+        // Sled-only by construction.
+        path: "/v1/snapshot",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SnapshotExportIntegrationV1",
+      },
     ];
 
     for (const route of v1OnlyRoutes) {
@@ -521,6 +537,43 @@ export class SchemaServiceStack extends Stack {
       "SCHEMA_EMBEDDINGS_TABLE",
       embeddingsTable.tableName,
     );
+
+    // =====================================================
+    // Cross-stack auth wire — `GET /v1/snapshot` validates
+    // `X-API-Key` against the exemem `ApiKeys` DynamoDB table.
+    //
+    // The schema_service Lambda reuses
+    // `exemem_common::api_key::validate_api_key` (SHA-256 hash +
+    // DynamoDB GetItem) — same path `storage_service` uses, no
+    // Lambda-to-Lambda invoke. The table is owned by the exemem-infra
+    // stack and exported as `ExememApiKeysTableName-{env}`
+    // (exemem-infra PR #154). This stack imports the name, derives the
+    // ARN, and grants the function `dynamodb:GetItem` on it.
+    //
+    // Same-region / same-account cross-stack import: dev is
+    // us-west-2 / prod is us-east-1, and exemem-infra deploys to
+    // identical regions, so `Fn.importValue` resolves locally without
+    // CFN cross-region complications.
+    // =====================================================
+    const apiKeysTableName = Fn.importValue(
+      `ExememApiKeysTableName-${envName}`,
+    );
+    const apiKeysTableArn = Stack.of(this).formatArn({
+      service: "dynamodb",
+      resource: "table",
+      resourceName: apiKeysTableName,
+    });
+    schemaServiceFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "ValidateExememApiKeys",
+        actions: ["dynamodb:GetItem"],
+        // Validation is a hashed-key lookup against the partition key
+        // (`api_key_hash`); no scans, no GSI reads. Scoping to GetItem
+        // keeps blast radius minimal even if the role is misused.
+        resources: [apiKeysTableArn],
+      }),
+    );
+    schemaServiceFn.addEnvironment("API_KEYS_TABLE", apiKeysTableName);
 
     // =====================================================
     // Compile worker — DockerImageFunction
