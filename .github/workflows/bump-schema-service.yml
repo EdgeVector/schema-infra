@@ -1,0 +1,132 @@
+name: Bump schema_service submodule (every 2h + on demand)
+
+# Mirrors EdgeVector/fold_db_node/.github/workflows/bump-schema-service.yml,
+# adapted for schema-infra's submodule pin (no Cargo.toml here).
+#
+# schema-infra carries `schema_service/` as a git submodule (path = schema_service,
+# branch = main per .gitmodules). The deploy pipeline builds the Lambda from
+# whatever sha the submodule pointer references at the time CI runs. If nobody
+# bumps the pointer, prod stays frozen against an old schema_service build —
+# which is exactly how the /v1/snapshot route shipped to schema_service main
+# on 2026-05-01 (PRs #102/#105) but never reached prod for 4+ days, blocking
+# downstream work in fold_dev_node Phase 3 (projects/fold-dev-node-phase-3).
+#
+# This workflow runs every 2h on cron and on `workflow_dispatch`. It opens
+# (or force-updates) a PR that bumps the submodule pointer to schema_service
+# main HEAD. auto-merge.yml flips on --auto/--squash; the merge queue lands
+# it; deploy.yml fires.
+#
+# Idempotent: if the submodule pointer already matches the resolved sha, the
+# scheduled run no-ops (no diff → no commit → no PR).
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      schema_service_sha:
+        description: "schema_service SHA to pin. Empty = use main HEAD."
+        required: false
+        type: string
+
+concurrency:
+  group: bump-schema-service-submodule
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve schema_service sha
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          SS_SHA="${{ github.event.inputs.schema_service_sha }}"
+          if [ -z "$SS_SHA" ]; then
+            SS_SHA=$(gh api /repos/EdgeVector/schema_service/commits/main --jq .sha)
+          fi
+          if ! [[ "$SS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::schema_service sha invalid: $SS_SHA"
+            exit 1
+          fi
+          echo "ss_sha=$SS_SHA" >> "$GITHUB_OUTPUT"
+          echo "ss_short=${SS_SHA:0:8}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          # Submodule isn't required for the gitlink update — we change the
+          # pointer with `git update-index --cacheinfo` and never check out
+          # the submodule's contents in this workflow. Keeps the job fast.
+          submodules: false
+
+      - name: Configure git as bot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Pre-flight — refuse to clobber a non-bot branch
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="bot/bump-schema-service"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            AUTHOR=$(gh api "/repos/${{ github.repository }}/commits/$BRANCH" --jq .commit.author.name 2>/dev/null || echo "")
+            if [ -n "$AUTHOR" ] && [ "$AUTHOR" != "github-actions[bot]" ]; then
+              echo "::error::Branch $BRANCH last touched by '$AUTHOR' — refusing to clobber."
+              exit 1
+            fi
+          fi
+
+      - name: Bump submodule pointer
+        id: bump
+        run: |
+          SS="${{ steps.target.outputs.ss_sha }}"
+          # Mode 160000 = gitlink (submodule pointer). This avoids needing a
+          # full submodule checkout; CI's deploy job runs `submodules: recursive`
+          # at checkout time and gets the new sha.
+          git update-index --cacheinfo 160000,"$SS",schema_service
+          if git diff --cached --quiet schema_service; then
+            echo "no-op: submodule already at $SS"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit + push + open PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="bot/bump-schema-service"
+          SS_SHORT="${{ steps.target.outputs.ss_short }}"
+          git checkout -B "$BRANCH"
+          git commit -m "chore(submodule): bump schema_service to ${SS_SHORT} (auto)"
+          # Graceful handling of merge-queue branch lock — same pattern as
+          # fold_db_node's bump workflow. If the previous bot PR is queued,
+          # GitHub rejects force-push with GH006; let the queued PR land and
+          # the next cron tick will pick up the newer sha.
+          if ! git push -f origin "$BRANCH" 2> /tmp/push.err; then
+              if grep -qE "GH006|added to a merge queue" /tmp/push.err; then
+                  echo "::warning::Branch $BRANCH is in merge queue (target sha=${SS_SHORT})."
+                  echo "::warning::Skipping force-push; next cron tick will retry once the queued PR lands."
+                  cat /tmp/push.err >&2
+                  exit 0
+              fi
+              cat /tmp/push.err >&2
+              exit 1
+          fi
+          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore(submodule): bump schema_service to ${SS_SHORT} (auto)" \
+              --body "Automated cascade bump: schema_service main → ${SS_SHORT}. Modeled on fold_db_node's bump-schema-service.yml; closes the cascade gap that left prod 4+ days behind on 2026-05-04."
+          fi
+          # auto-merge.yml handles --auto/--squash on opened/synchronize.
+          # Calling here too is defensive — no-op if already enabled.
+          gh pr merge --auto --squash "$BRANCH" || echo "auto-merge already enabled or PR already merged (no-op)"
