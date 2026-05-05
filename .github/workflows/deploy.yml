@@ -122,6 +122,13 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-west-2
           CDK_DEFAULT_REGION: us-west-2
+          # GH_PAT propagates into the TransformCompileWorker Docker
+          # build (via cdk schema-stack.ts buildArgs → Dockerfile ARG).
+          # Required for cargo to fetch private cross-repo deps
+          # (exemem_common). Companion to schema_service PR #114 which
+          # adds the matching ARG GH_PAT + git config rewrite to the
+          # Dockerfile.
+          GH_PAT: ${{ secrets.GH_PAT }}
 
       - name: Get CloudFormation outputs
         id: cf-outputs
@@ -259,6 +266,8 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
           CDK_DEFAULT_REGION: us-east-1
+          # See deploy-dev's GH_PAT comment — same rationale, prod side.
+          GH_PAT: ${{ secrets.GH_PAT }}
 
       - name: Prod deployment summary
         run: |
