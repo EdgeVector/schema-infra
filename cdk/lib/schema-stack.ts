@@ -605,6 +605,20 @@ export class SchemaServiceStack extends Stack {
             // The build.sh pipeline runs the Dockerfile against the
             // whole workspace so the worker crate can resolve its
             // `fold_db = { workspace = ... }` + sibling crate paths.
+            //
+            // GH_PAT propagates to the Dockerfile's `ARG GH_PAT` so cargo
+            // can fetch private cross-repo deps (exemem_common, etc.).
+            // Companion to schema-infra PR #62 (which fixed the same
+            // issue for the request-path Lambda zip Docker build) and
+            // schema_service PR #114 (which adds the `ARG GH_PAT` +
+            // `git config --global url..insteadOf` to this Dockerfile).
+            //
+            // Empty default keeps local `cdk synth` working without a
+            // token in the env (synth doesn't actually run docker build).
+            // The deploy job sets GH_PAT via deploy.yml's env block.
+            buildArgs: {
+              GH_PAT: process.env.GH_PAT ?? "",
+            },
           },
         ),
         memorySize: 4096,
