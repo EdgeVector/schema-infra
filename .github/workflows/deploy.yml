@@ -46,6 +46,15 @@ jobs:
             ${{ runner.os }}-docker-build-
 
       - name: Build Lambda + fastembed Layer
+        # GH_PAT propagates into the AL2023 Docker container so cargo can
+        # fetch private cross-repo git deps (e.g. exemem_common from
+        # EdgeVector/exemem-infra, added in schema_service PR #105). Without
+        # it, the container starts with no git config and cargo's git
+        # fetcher hits public github.com anonymously and fails auth.
+        # Mirrors schema_service ci.yml + lambda-release.yml's existing
+        # `git config --global url..."@github.com/".insteadOf` setup.
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: ./build.sh release
 
       - uses: actions/upload-artifact@v4

@@ -80,10 +80,20 @@ docker run --rm \
     -e CARGO_HOME=/build/schema-infra/.docker-cache/cargo \
     -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
     -e BUILD_PROFILE="$PROFILE" \
+    -e GH_PAT="${GH_PAT:-}" \
     amazonlinux:2023 \
     bash -c '
         set -euo pipefail
-        yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl > /dev/null 2>&1
+        yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
+        # Cargo needs to fetch private cross-repo git deps (e.g.
+        # exemem_common from EdgeVector/exemem-infra, added in
+        # schema_service PR #105). Mirror schema_service ci.yml line 120
+        # and lambda-release.yml line 38 — rewrite https://github.com/
+        # to use the GH_PAT-authenticated URL. Conditional on GH_PAT so
+        # local builds (no token) still work for fully-public-dep cases.
+        if [ -n "${GH_PAT:-}" ]; then
+            git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
+        fi
         if [ ! -x /build/schema-infra/.docker-cache/cargo/bin/cargo ]; then
             curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable 2>&1 | tail -1
         fi
