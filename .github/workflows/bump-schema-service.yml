@@ -122,7 +122,17 @@ jobs:
               cat /tmp/push.err >&2
               exit 1
           fi
-          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+          # `gh pr view <branch>` returns the most recent PR for the
+          # branch regardless of state — including merged/closed. The
+          # previous `if ! gh pr view "$BRANCH"` guard skipped PR
+          # creation whenever a previously-merged PR existed for the
+          # same bot branch, leaving force-pushed bumps stranded with
+          # no open PR. Verified empirically 2026-05-05 (cron pushed
+          # commit 5457e371 to bot/bump-schema-service after PR #61
+          # merged, then no PR ever opened — surfaced in PR #64).
+          # Check `.state == "OPEN"` instead.
+          PR_STATE=$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null || echo "")
+          if [ "$PR_STATE" != "OPEN" ]; then
             gh pr create --base main --head "$BRANCH" \
               --title "chore(submodule): bump schema_service to ${SS_SHORT} (auto)" \
               --body "Automated cascade bump: schema_service main → ${SS_SHORT}. Modeled on fold_db_node's bump-schema-service.yml; closes the cascade gap that left prod 4+ days behind on 2026-05-04."
