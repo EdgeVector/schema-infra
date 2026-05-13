@@ -58,8 +58,8 @@ jobs:
         run: |
           mkdir -p target/fastembed_layer
           touch target/fastembed_layer/.synth-placeholder
-          mkdir -p schema_service/target/lambda/server_lambda-extracted
-          touch schema_service/target/lambda/server_lambda-extracted/.synth-placeholder
+          mkdir -p fold/target/lambda/server_lambda-extracted
+          touch fold/target/lambda/server_lambda-extracted/.synth-placeholder
 
       - name: CDK synth (dev environment)
         env:

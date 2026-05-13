@@ -39,13 +39,13 @@ schema-infra/
 │   ├── bin/               # CDK app entry point
 │   ├── lib/               # Stack definitions
 │   └── package.json       # CDK dependencies
-├── schema_service/        # Lambda handler source (submodule → EdgeVector/schema_service)
+├── fold/                  # Lambda handler source (submodule → EdgeVector/fold monorepo)
 ├── frontend/              # Schema registry web UI
 ├── build.sh              # Build Lambda zip + fastembed Layer
 └── deploy.sh             # Deploy infrastructure
 ```
 
-Lambda handler source now lives in the [`EdgeVector/schema_service`](https://github.com/EdgeVector/schema_service) repo, vendored here as a submodule at `schema_service/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` inside the submodule and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
+Lambda handler source lives in the [`EdgeVector/fold`](https://github.com/EdgeVector/fold) monorepo (which contains `fold_db`, `schema_service`, and `fold_db_node` in one cargo workspace), vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` from the monorepo workspace root and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
 
 ## Quick Start
 
@@ -98,10 +98,8 @@ Deploy to Vercel or another static hosting service.
 ## API Endpoints
 
 The Lambda serves the full `/v1/*` surface — 19 endpoints covering
-schemas, views, transforms, and system. See the canonical list in
-[`schema_service/README.md`](https://github.com/EdgeVector/schema_service/blob/main/README.md#http-surface-v1)
-or the machine-readable spec at
-[`schema_service/openapi.yaml`](https://github.com/EdgeVector/schema_service/blob/main/openapi.yaml).
+schemas, views, transforms, and system. See the machine-readable spec
+at [`fold/schema_service/openapi.yaml`](https://github.com/EdgeVector/fold/blob/main/schema_service/openapi.yaml).
 
 A few representative routes:
 
@@ -131,7 +129,7 @@ Schemas are stored in S3 as individual JSON blobs:
 s3://<SCHEMAS_BUCKET>/schemas/<schema_name>.json
 ```
 
-The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the dev binary in [`schema_service/crates/server_http/`](https://github.com/EdgeVector/schema_service/tree/main/crates/server_http) uses `SledSchemaPersistence` (default port 9102, for local development).
+The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the dev binary in [`fold/schema_service/crates/server_http/`](https://github.com/EdgeVector/fold/tree/main/schema_service/crates/server_http) uses `SledSchemaPersistence` (default port 9102, for local development).
 
 ## fastembed Lambda Layer
 

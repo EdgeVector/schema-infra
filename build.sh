@@ -3,11 +3,13 @@
 # Build script for schema service infrastructure.
 #
 # Drives the full pre-deploy artifact assembly:
-#   1. Init / update the `schema_service/` submodule (pinned to main).
-#   2. Build the Lambda zip from `schema_service/crates/server_lambda/`
+#   1. Init / update the `fold/` submodule (the EdgeVector/fold monorepo,
+#      pinned to main). Contains schema_service crates + fold_db crates
+#      in one cargo workspace, so no sibling-fold_db checkout is needed.
+#   2. Build the Lambda zip from `fold/schema_service/crates/server_lambda/`
 #      (runs cargo-lambda inside Amazon Linux 2023 so ort-sys, which
 #      fastembed pulls in, links against the Lambda runtime glibc).
-#   3. Extract the zip to `schema_service/target/lambda/server_lambda-extracted/`
+#   3. Extract the zip to `fold/target/lambda/server_lambda-extracted/`
 #      which is the path CDK reads via `Code.fromAsset(...)`.
 #   4. Download the fastembed model files into `target/fastembed_layer/`
 #      (at schema-infra repo root). CDK reads this via Code.fromAsset.
@@ -15,9 +17,8 @@
 # Note: the async compile worker (`transform-compile-worker-${envName}`)
 # is packaged as a Docker container image, built directly by the CDK
 # deploy via `DockerImageCode.fromImageAsset(...)` pointed at
-# `schema_service/crates/worker/Dockerfile`. No pre-build step here —
-# `cdk deploy` runs `docker build` as part of asset publishing. See
-# `projects/transform-worker-split` in gbrain for rationale.
+# `fold/schema_service/crates/worker/Dockerfile`. No pre-build step here —
+# `cdk deploy` runs `docker build` as part of asset publishing.
 #
 # Usage:
 #   ./build.sh                    # release build
@@ -35,14 +36,14 @@ echo "Profile: $PROFILE"
 echo ""
 
 # =============================================================
-# 1. Submodule — the schema_service repo
+# 1. Submodule — the fold monorepo
 # =============================================================
-SCHEMA_SERVICE_DIR="$SCRIPT_DIR/schema_service"
-if [ ! -f "$SCHEMA_SERVICE_DIR/Cargo.toml" ]; then
-    echo "schema_service submodule not initialized, running git submodule update..."
-    git submodule update --init --recursive -- schema_service
+FOLD_DIR="$SCRIPT_DIR/fold"
+if [ ! -f "$FOLD_DIR/Cargo.toml" ]; then
+    echo "fold submodule not initialized, running git submodule update..."
+    git submodule update --init --recursive -- fold
 fi
-echo "schema_service submodule at: $(git -C "$SCHEMA_SERVICE_DIR" rev-parse --short HEAD)"
+echo "fold submodule at: $(git -C "$FOLD_DIR" rev-parse --short HEAD)"
 
 # =============================================================
 # 2. Lambda build inside Docker (AL2023 == Lambda runtime)
@@ -52,21 +53,11 @@ echo "schema_service submodule at: $(git -C "$SCHEMA_SERVICE_DIR" rev-parse --sh
 # image, so the resulting binary matches the runtime glibc exactly.
 #
 # Layout inside the container:
-#   /build/schema-infra/              ← this repo
-#   /build/schema-infra/schema_service/ ← submodule (mounted via parent)
-#   /build/schema-infra/fold_db/      ← workspace fold_db, mounted so the
-#                                       submodule's `.cargo/config.toml`
-#                                       patch `path = "../fold_db"` resolves.
+#   /build/schema-infra/         ← this repo
+#   /build/schema-infra/fold/    ← submodule (fold monorepo, self-contained;
+#                                  contains both schema_service and fold_db
+#                                  crates as one cargo workspace)
 # =============================================================
-WORKSPACE_FOLD_DB="$(cd "$SCRIPT_DIR/../fold_db" 2>/dev/null && pwd -P || true)"
-if [ -z "$WORKSPACE_FOLD_DB" ] || [ ! -d "$WORKSPACE_FOLD_DB" ]; then
-    echo "ERROR: workspace fold_db not found at $SCRIPT_DIR/../fold_db"
-    echo "       Build requires the exemem-workspace layout so the schema_service"
-    echo "       submodule's .cargo/config.toml patch can resolve fold_db locally."
-    exit 1
-fi
-echo "Using workspace fold_db from: $WORKSPACE_FOLD_DB"
-
 CACHE_DIR="$SCRIPT_DIR/.docker-cache"
 mkdir -p "$CACHE_DIR/cargo" "$CACHE_DIR/rustup"
 
@@ -75,8 +66,7 @@ echo "=== Building Lambda zip (Docker: amazonlinux:2023) ==="
 docker run --rm \
     --platform linux/amd64 \
     -v "$SCRIPT_DIR":/build/schema-infra \
-    -v "$WORKSPACE_FOLD_DB":/build/schema-infra/fold_db \
-    -w /build/schema-infra/schema_service \
+    -w /build/schema-infra/fold \
     -e CARGO_HOME=/build/schema-infra/.docker-cache/cargo \
     -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
     -e BUILD_PROFILE="$PROFILE" \
@@ -86,11 +76,9 @@ docker run --rm \
         set -euo pipefail
         yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
         # Cargo needs to fetch private cross-repo git deps (e.g.
-        # exemem_common from EdgeVector/exemem-infra, added in
-        # schema_service PR #105). Mirror schema_service ci.yml line 120
-        # and lambda-release.yml line 38 — rewrite https://github.com/
-        # to use the GH_PAT-authenticated URL. Conditional on GH_PAT so
-        # local builds (no token) still work for fully-public-dep cases.
+        # exemem_common from EdgeVector/exemem-infra). Conditional on
+        # GH_PAT so local builds (no token) still work for fully-public-dep
+        # cases.
         if [ -n "${GH_PAT:-}" ]; then
             git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
         fi
@@ -113,8 +101,8 @@ docker run --rm \
 # =============================================================
 # 3. Extract bootstrap.zip for CDK Code.fromAsset(...)
 # =============================================================
-ZIP_PATH="$SCHEMA_SERVICE_DIR/target/lambda/server_lambda/bootstrap.zip"
-EXTRACTED_DIR="$SCHEMA_SERVICE_DIR/target/lambda/server_lambda-extracted"
+ZIP_PATH="$FOLD_DIR/target/lambda/server_lambda/bootstrap.zip"
+EXTRACTED_DIR="$FOLD_DIR/target/lambda/server_lambda-extracted"
 
 if [ ! -f "$ZIP_PATH" ]; then
     echo "ERROR: Lambda build did not produce $ZIP_PATH"
