@@ -209,9 +209,16 @@ jobs:
       - name: Smoke tests passed
         run: echo "All dev smoke tests passed (health + schemas + views + transform async flow)"
 
-  # 4. Deploy to Prod
+  # 4. Deploy to Prod (main branch only).
+  #
+  # Without this `if:` gate, a `workflow_dispatch` triggered on a feature
+  # branch will happily deploy that branch's artifacts to PROD — which is
+  # exactly what happened when the migrate-to-fold-monorepo PR's
+  # workflow_dispatch run shipped prod ahead of the post-merge push:main
+  # run. Lucky alignment that time (same artifacts), but a clear footgun.
   deploy-prod:
     needs: smoke-test-dev
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
