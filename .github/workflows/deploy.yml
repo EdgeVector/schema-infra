@@ -12,47 +12,37 @@ env:
 jobs:
   # 1. Build Lambda (Docker for ONNX Runtime compatibility)
   #
-  # Clippy + unit tests for the Lambda handler run in the schema_service
-  # submodule's own CI (EdgeVector/schema_service -> .github/workflows/
-  # ci.yml) so we don't re-run them here. This job's only job is to
-  # assemble the deployable Lambda zip + fastembed Layer asset.
+  # Clippy + unit tests for the Lambda handler run in the fold monorepo's
+  # CI (EdgeVector/fold .github/workflows/ci.yml) so we don't re-run
+  # them here. This job's only job is to assemble the deployable Lambda
+  # zip + fastembed Layer asset.
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          # schema-infra is public but its `schema_service/` submodule is
-          # private. The submodule checkout needs a token with access to
-          # EdgeVector/schema_service. `GH_PAT` is the EdgeVector
-          # org-level secret provisioned for private-submodule checkouts
-          # across workflows; the local-repo `GPAT` secret is not
-          # provisioned here.
+          # schema-infra is public but its `fold/` submodule (the
+          # EdgeVector/fold monorepo) is private. `GH_PAT` is the
+          # org-level secret with access to private EdgeVector repos.
           token: ${{ secrets.GH_PAT }}
-
-      - name: Clone fold_db dependency
-        run: |
-          git clone --depth 1 --branch main https://github.com/EdgeVector/fold_db.git "$GITHUB_WORKSPACE/../fold_db"
-          mkdir -p "$GITHUB_WORKSPACE/../fold_db/src/server/static-react/dist"
 
       - uses: actions/cache@v4
         with:
           path: |
             .docker-cache/cargo/registry/
             .docker-cache/cargo/git/
-            schema_service/target/
-          key: ${{ runner.os }}-docker-build-${{ hashFiles('schema_service/Cargo.lock') }}
+            fold/target/
+          key: ${{ runner.os }}-docker-build-${{ hashFiles('fold/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-docker-build-
 
       - name: Build Lambda + fastembed Layer
         # GH_PAT propagates into the AL2023 Docker container so cargo can
         # fetch private cross-repo git deps (e.g. exemem_common from
-        # EdgeVector/exemem-infra, added in schema_service PR #105). Without
-        # it, the container starts with no git config and cargo's git
-        # fetcher hits public github.com anonymously and fails auth.
-        # Mirrors schema_service ci.yml + lambda-release.yml's existing
-        # `git config --global url..."@github.com/".insteadOf` setup.
+        # EdgeVector/exemem-infra). Without it, the container starts with
+        # no git config and cargo's git fetcher hits public github.com
+        # anonymously and fails auth.
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: ./build.sh release
@@ -60,7 +50,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lambda-schema-service
-          path: schema_service/target/lambda/server_lambda-extracted/
+          path: fold/target/lambda/server_lambda-extracted/
           retention-days: 1
 
       # Model + tokenizer files ship as a separate Lambda Layer so the
@@ -85,10 +75,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # CDK's `DockerImageCode.fromImageAsset` points at
-          # `schema_service/crates/worker/Dockerfile` (inside the
-          # schema_service submodule), so the deploy job needs the
-          # submodule initialized. GH_PAT is the org-provisioned PAT
-          # with access to the private schema_service repo.
+          # `fold/schema_service/crates/worker/Dockerfile` (inside the
+          # fold monorepo submodule), so the deploy job needs the
+          # submodule initialized. GH_PAT has access to the private
+          # EdgeVector/fold repo.
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
       - uses: aws-actions/configure-aws-credentials@v4
@@ -101,7 +91,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: lambda-schema-service
-          path: schema_service/target/lambda/server_lambda-extracted/
+          path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
         uses: actions/download-artifact@v4
@@ -245,7 +235,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: lambda-schema-service
-          path: schema_service/target/lambda/server_lambda-extracted/
+          path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
         uses: actions/download-artifact@v4

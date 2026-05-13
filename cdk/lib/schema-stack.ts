@@ -105,17 +105,16 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // Schema Service Lambda Function
     // =====================================================
-    // Lambda source lives in the `schema_service` repo (submodule at
-    // `schema-infra/schema_service/`). The build pipeline in `build.sh`
-    // runs `cargo lambda build -p schema_service_server_lambda` inside
-    // the submodule and extracts the resulting bootstrap.zip to the
-    // path referenced below. See `projects/phase-1-t4-cdk-switch` for
-    // the cutover rationale.
+    // Lambda source lives in the `fold` monorepo (submodule at
+    // `schema-infra/fold/`). The build pipeline in `build.sh` runs
+    // `cargo lambda build -p schema_service_server_lambda` from the
+    // monorepo's workspace root and extracts the resulting bootstrap.zip
+    // to the path referenced below.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
       code: lambda.Code.fromAsset(
-        "../schema_service/target/lambda/server_lambda-extracted",
+        "../fold/target/lambda/server_lambda-extracted",
       ),
       layers: [fastembedLayer],
       // First cold start on an empty bucket seeds 12 Phase 1 built-in
@@ -584,9 +583,9 @@ export class SchemaServiceStack extends Stack {
     // doesn't fit in a Lambda zip. Container images do.
     //
     // Image source: `schema_service/crates/worker/Dockerfile` in the
-    // vendored submodule. `lambda.DockerImageCode.fromImageAsset(...)`
-    // points at the whole schema_service repo so the Dockerfile's
-    // `COPY . .` has access to every crate in the workspace.
+    // fold monorepo submodule. `lambda.DockerImageCode.fromImageAsset(...)`
+    // points at the whole monorepo so the Dockerfile's `COPY . .` has
+    // access to every crate in the workspace.
     //
     // Memory 4GB + ephemeral 10GB to accommodate cargo builds. Reserved
     // concurrency 5 so a thundering herd of compile requests can't
@@ -599,9 +598,9 @@ export class SchemaServiceStack extends Stack {
       {
         functionName: `transform-compile-worker-${envName}`,
         code: lambda.DockerImageCode.fromImageAsset(
-          path.join(__dirname, "../../schema_service"),
+          path.join(__dirname, "../../fold"),
           {
-            file: "crates/worker/Dockerfile",
+            file: "schema_service/crates/worker/Dockerfile",
             // The build.sh pipeline runs the Dockerfile against the
             // whole workspace so the worker crate can resolve its
             // `fold_db = { workspace = ... }` + sibling crate paths.
