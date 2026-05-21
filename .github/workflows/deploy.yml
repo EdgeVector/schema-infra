@@ -19,7 +19,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           submodules: recursive
           # schema-infra is public but its `fold/` submodule (the
@@ -27,7 +27,7 @@ jobs:
           # org-level secret with access to private EdgeVector repos.
           token: ${{ secrets.GH_PAT }}
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
           path: |
             .docker-cache/cargo/registry/
@@ -47,7 +47,7 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: ./build.sh release
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
@@ -55,7 +55,7 @@ jobs:
 
       # Model + tokenizer files ship as a separate Lambda Layer so the
       # function zip stays small. build.sh populates this directory.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
@@ -67,12 +67,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # OIDC token issuance for aws-actions/configure-aws-credentials.
+      # Scoped to this job so neither `build` nor `smoke-test-dev` can mint
+      # AWS tokens. The role itself (SchemaInfraDeployDev) only trusts
+      # `sub: repo:EdgeVector/schema-infra:*` from the OIDC provider.
+      id-token: write
     outputs:
       api_url: ${{ steps.cf-outputs.outputs.api_url }}
     env:
       AWS_REGION: us-west-2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           # CDK's `DockerImageCode.fromImageAsset` points at
           # `fold/schema_service/crates/worker/Dockerfile` (inside the
@@ -81,25 +86,24 @@ jobs:
           # EdgeVector/fold repo.
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployDev
           aws-region: us-west-2
 
       - name: Download Lambda artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -193,7 +197,7 @@ jobs:
       # `wasm_bytes` API and this step will exit 1 with a crisp
       # "missing field wasm_bytes" message — that's the baseline
       # signal that the worker split hasn't deployed yet.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           sparse-checkout: |
             test/e2e
@@ -222,35 +226,39 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # OIDC token issuance — SchemaInfraDeployProd only trusts
+      # `sub: repo:EdgeVector/schema-infra:ref:refs/heads/main`, so a
+      # workflow_dispatch on a feature branch can't assume this role even
+      # if the `if:` gate above were removed.
+      id-token: write
     env:
       AWS_REGION: us-east-1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           # Same submodule requirement as deploy-dev — see that job's
           # inline comment. Prod CDK needs the worker Dockerfile path
           # to resolve.
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployProd
           aws-region: us-east-1
 
       - name: Download Lambda artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: '18'
           cache: 'npm'
