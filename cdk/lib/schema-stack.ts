@@ -135,6 +135,17 @@ export class SchemaServiceStack extends Stack {
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
         SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
+        // Dev-only: activate Phase B's dual-signal canonicalization
+        // gate so the `fold-dev-node` dogfood loop stops collapsing
+        // structurally-identical inputs into the wrong canonical.
+        // Prod stays on the single-signal default until Phase E (fold
+        // workspace task `20340`) ships the default flip after Phase C
+        // (`68e3a`) lands + threshold tuning settles. Phase D backfill
+        // populated `purpose_statement` on every existing canonical in
+        // this bucket, so the embedder has a real second signal here.
+        ...(envName === "dev"
+          ? { SCHEMA_DUAL_SIGNAL_CANONICALIZATION: "true" }
+          : {}),
       },
     });
 
