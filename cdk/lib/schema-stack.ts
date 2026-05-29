@@ -18,6 +18,7 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as cr from "aws-cdk-lib/custom-resources";
 import * as path from "path";
 
 export interface SchemaServiceStackProps extends StackProps {
@@ -103,6 +104,65 @@ export class SchemaServiceStack extends Stack {
     });
 
     // =====================================================
+    // App identity v3.1 — trusted root pubkey from exemem-infra
+    //
+    // schema_service verifies DevCert envelopes offline against a set
+    // of trusted exemem root P-256 SubjectPublicKeyInfo DER pubkeys
+    // (see `fold/schema_service/crates/core/src/app_identity.rs`
+    // `parse_trusted_roots`). Without APP_IDENTITY_ROOT_PUBKEYS, the
+    // Lambda rejects every dev cert with 401 and the owner_app_id
+    // gate on POST /v1/schemas silently degrades to a passthrough
+    // (`server_lambda/src/main.rs:446-460`).
+    //
+    // The pubkey lives in KMS in the peer exemem-infra stack at alias
+    // `exemem-app-identity-root-{env}`. KMS does NOT expose the pubkey
+    // bytes via CFN output, so we fetch them at deploy time via a
+    // CloudFormation Custom Resource and inject the base64-encoded
+    // SPKI DER as the Lambda env var.
+    //
+    // Algorithm is ES256 (P-256 / ECDSA_SHA_256), not Ed25519 — AWS
+    // KMS has no `ECC_ED25519` key spec. See
+    // `exemem-infra/.task-blocked.md` and the v3.1 design doc decision
+    // log (2026-05-29 entry).
+    // =====================================================
+    const appIdentityRootKeyArn = Fn.importValue(
+      `ExememAppIdentityRootKeyArn-${envName}`,
+    );
+    const appIdentityRootPubkeyFetcher = new cr.AwsCustomResource(
+      this,
+      "AppIdentityRootPubkeyFetcher",
+      {
+        // Re-fetch on every deploy (covers a planned KMS key rotation:
+        // bump the rotation, redeploy, the new pubkey lands in the env
+        // var, the Lambda hot-replaces and resumes verifying). Stable
+        // physical resource id so CFN treats it as the same logical
+        // resource across deploys.
+        onUpdate: {
+          service: "KMS",
+          action: "getPublicKey",
+          parameters: { KeyId: appIdentityRootKeyArn },
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `app-identity-root-pubkey-${envName}`,
+          ),
+        },
+        policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+          resources: [appIdentityRootKeyArn],
+        }),
+        // Use the Lambda runtime's bundled AWS SDK rather than
+        // installing the latest on every deploy. KMS GetPublicKey is
+        // in every supported runtime; latest-SDK churn is what the CDK
+        // best-practice deprecation warning is about.
+        installLatestAwsSdk: false,
+      },
+    );
+    // `PublicKey` is the base64-encoded SubjectPublicKeyInfo DER bytes
+    // per the KMS GetPublicKey API contract. The Lambda decodes it
+    // with `BASE64.decode(entry)` and derives the envelope `key_id` as
+    // `hex(sha256(SPKI DER))`. Resolved at deploy time.
+    const appIdentityRootPubkeyB64 =
+      appIdentityRootPubkeyFetcher.getResponseField("PublicKey");
+
+    // =====================================================
     // Schema Service Lambda Function
     // =====================================================
     // Lambda source lives in the `fold` monorepo (submodule at
@@ -146,6 +206,32 @@ export class SchemaServiceStack extends Stack {
         ...(envName === "dev"
           ? { SCHEMA_DUAL_SIGNAL_CANONICALIZATION: "true" }
           : {}),
+        // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
+        // block above for the pubkey fetch + ES256/Ed25519 note.
+        //
+        // ENVIRONMENT binds DevCert envelopes to this deployment:
+        // `prod`/`production` → Env::Prod, anything else → Env::Dev
+        // (per `deployment_env_from_process` in app_identity.rs:234).
+        // Cross-env certs (a `prod`-bound envelope replayed against
+        // `dev`) are rejected at verification.
+        ENVIRONMENT: envName,
+        // Trusted exemem root pubkeys (comma-separated base64 SPKI DER)
+        // for offline DevCert verification. With none, /v1/apps 401s
+        // every cert and owner_app_id on /v1/schemas is a passthrough.
+        APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
+        // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
+        // activates only when BOTH of the following are set:
+        //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
+        //     e.g. "prod=https://axo709qs11.execute-api.us-east-1.amazonaws.com"
+        //   CROSS_ENV_MIRROR_TOKEN — shared secret across peer envs
+        // Without them the dev env claims an app_id locally, the
+        // scheduled `POST /v1/admin/reconcile-apps` is the only
+        // mechanism that surfaces cross-env divergence, and the
+        // initial publish to each env is manual. When both envs are
+        // live and have a shared SSM/Secrets-Manager token, wire
+        // those here. See `docs/cross_env_mirror_runbook.md`.
+        // CROSS_ENV_MIRROR_PEERS: "prod=https://axo709qs11.execute-api.us-east-1.amazonaws.com",
+        // CROSS_ENV_MIRROR_TOKEN: <SecretValue>.toString(),
       },
     });
 
