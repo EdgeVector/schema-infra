@@ -520,6 +520,53 @@ exports.handler = async (event) => {
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SnapshotExportIntegrationV1",
       },
+      // =====================================================
+      // App identity v3.1 (Lanes B2b / B2c).
+      //
+      // Mount the app-identity routes on the gateway so the Lambda
+      // dispatch arms (already deployed) become reachable. With the
+      // owner_app_id gate ACTIVE on POST /v1/schemas (it activates
+      // as soon as APP_IDENTITY_ROOT_PUBKEYS is set — see the env
+      // var block above), the app-owned publish flow is the only
+      // way to register a User-source schema. Without POST /v1/apps
+      // on the gateway the gate becomes a hard wall: every publish
+      // 400s with owner_app_id_required and the client has no way
+      // to obtain an app_id. See `fold/schema_service/CLAUDE.md` for
+      // the publish handshake and the dev-cert/mirror runbook.
+      // =====================================================
+      {
+        // POST /v1/apps — register an app namespace. Lambda enforces
+        // the dev-cert + ECDSA signature gate in
+        // `server_lambda/src/main.rs ("POST", "/v1/apps")`.
+        path: "/v1/apps",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "AppRegisterIntegrationV1",
+      },
+      {
+        // GET /v1/apps/{app_id} — lookup an app record by id. Clients
+        // call this to resolve owner_app_id before publishing.
+        path: "/v1/apps/{app_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "AppGetIntegrationV1",
+      },
+      {
+        // POST /v1/apps/mirror — cross-env mirror receiver (Lane B2c).
+        // Peer envs POST an app record here when they register an
+        // app in their own registry. x-mirror-token gated in the
+        // Lambda; safe to mount even when the mirror is inactive.
+        path: "/v1/apps/mirror",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "AppMirrorIntegrationV1",
+      },
+      {
+        // POST /v1/triggers/simulate — stateless trigger dry-run.
+        // Validates the spec and computes when it would fire under
+        // the given facts. No app-identity coupling, but landed in
+        // the same release wave.
+        path: "/v1/triggers/simulate",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "TriggersSimulateIntegrationV1",
+      },
     ];
 
     for (const route of v1OnlyRoutes) {
