@@ -3,6 +3,7 @@ import {
   StackProps,
   Duration,
   CfnOutput,
+  CustomResource,
   Fn,
   RemovalPolicy,
   Size,
@@ -128,46 +129,79 @@ export class SchemaServiceStack extends Stack {
     const appIdentityRootKeyArn = Fn.importValue(
       `ExememAppIdentityRootKeyArn-${envName}`,
     );
-    const appIdentityRootPubkeyFetcher = new cr.AwsCustomResource(
+    // Custom resource that fetches the SPKI pubkey from KMS at deploy
+    // time and stores it as a single base64 string field in the CFN
+    // response. The prior `cr.AwsCustomResource` form tripped the
+    // 4096-byte response limit because AwsCustomResource flattens the
+    // raw KMS response — `PublicKey` arrives as a `Uint8Array`, which
+    // the response flattener walks into per-byte keys
+    // (`PublicKey.0`, `PublicKey.1`, …). `outputPaths: ["PublicKey"]`
+    // is a prefix filter, so it keeps all of those flattened bytes and
+    // does nothing. Replacing with a small Provider-backed Lambda lets
+    // us base64-encode the bytes once and return a single ~150-byte
+    // string field, well under the limit.
+    const appIdentityRootPubkeyHandler = new lambda.Function(
+      this,
+      "AppIdentityRootPubkeyHandler",
+      {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        handler: "index.handler",
+        timeout: Duration.seconds(30),
+        code: lambda.Code.fromInline(
+          `const { KMSClient, GetPublicKeyCommand } = require("@aws-sdk/client-kms");
+exports.handler = async (event) => {
+  const physicalResourceId =
+    event.PhysicalResourceId ||
+    "app-identity-root-pubkey-" + (event.ResourceProperties.Env || "dev");
+  if (event.RequestType === "Delete") {
+    return { PhysicalResourceId: physicalResourceId };
+  }
+  const keyId = event.ResourceProperties.KeyId;
+  const client = new KMSClient({});
+  const resp = await client.send(new GetPublicKeyCommand({ KeyId: keyId }));
+  if (!resp.PublicKey) {
+    throw new Error("KMS GetPublicKey returned no PublicKey for " + keyId);
+  }
+  const publicKeyB64 = Buffer.from(resp.PublicKey).toString("base64");
+  return {
+    PhysicalResourceId: physicalResourceId,
+    Data: { PublicKeyB64: publicKeyB64 },
+  };
+};
+`,
+        ),
+      },
+    );
+    appIdentityRootPubkeyHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["kms:GetPublicKey"],
+        resources: [appIdentityRootKeyArn],
+      }),
+    );
+    const appIdentityRootPubkeyProvider = new cr.Provider(
+      this,
+      "AppIdentityRootPubkeyProvider",
+      {
+        onEventHandler: appIdentityRootPubkeyHandler,
+      },
+    );
+    const appIdentityRootPubkeyFetcher = new CustomResource(
       this,
       "AppIdentityRootPubkeyFetcher",
       {
-        // Re-fetch on every deploy (covers a planned KMS key rotation:
-        // bump the rotation, redeploy, the new pubkey lands in the env
-        // var, the Lambda hot-replaces and resumes verifying). Stable
-        // physical resource id so CFN treats it as the same logical
-        // resource across deploys.
-        onUpdate: {
-          service: "KMS",
-          action: "getPublicKey",
-          parameters: { KeyId: appIdentityRootKeyArn },
-          physicalResourceId: cr.PhysicalResourceId.of(
-            `app-identity-root-pubkey-${envName}`,
-          ),
-          // Restrict the stored CFN response to just `PublicKey`. The full
-          // KMS GetPublicKey response (KeyId ARN, KeySpec, SigningAlgorithms,
-          // KeyAgreementAlgorithms, plus the SPKI PublicKey blob) exceeds
-          // the 4096-byte AwsCustomResource response limit and the stack
-          // rolls back with "Response object is too long". Only `PublicKey`
-          // is consumed downstream via getResponseField.
-          outputPaths: ["PublicKey"],
+        serviceToken: appIdentityRootPubkeyProvider.serviceToken,
+        properties: {
+          KeyId: appIdentityRootKeyArn,
+          Env: envName,
         },
-        policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
-          resources: [appIdentityRootKeyArn],
-        }),
-        // Use the Lambda runtime's bundled AWS SDK rather than
-        // installing the latest on every deploy. KMS GetPublicKey is
-        // in every supported runtime; latest-SDK churn is what the CDK
-        // best-practice deprecation warning is about.
-        installLatestAwsSdk: false,
       },
     );
-    // `PublicKey` is the base64-encoded SubjectPublicKeyInfo DER bytes
-    // per the KMS GetPublicKey API contract. The Lambda decodes it
-    // with `BASE64.decode(entry)` and derives the envelope `key_id` as
+    // PublicKeyB64 is the base64-encoded SubjectPublicKeyInfo DER bytes
+    // returned by KMS GetPublicKey. The Lambda decodes it with
+    // `BASE64.decode(entry)` and derives the envelope `key_id` as
     // `hex(sha256(SPKI DER))`. Resolved at deploy time.
     const appIdentityRootPubkeyB64 =
-      appIdentityRootPubkeyFetcher.getResponseField("PublicKey");
+      appIdentityRootPubkeyFetcher.getAttString("PublicKeyB64");
 
     // =====================================================
     // Schema Service Lambda Function
