@@ -144,6 +144,13 @@ export class SchemaServiceStack extends Stack {
           physicalResourceId: cr.PhysicalResourceId.of(
             `app-identity-root-pubkey-${envName}`,
           ),
+          // Restrict the stored CFN response to just `PublicKey`. The full
+          // KMS GetPublicKey response (KeyId ARN, KeySpec, SigningAlgorithms,
+          // KeyAgreementAlgorithms, plus the SPKI PublicKey blob) exceeds
+          // the 4096-byte AwsCustomResource response limit and the stack
+          // rolls back with "Response object is too long". Only `PublicKey`
+          // is consumed downstream via getResponseField.
+          outputPaths: ["PublicKey"],
         },
         policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
           resources: [appIdentityRootKeyArn],
