@@ -1,0 +1,90 @@
+name: Auto-deploy dev on fold change
+
+# Keeps the DEV schema_service Lambda current with the fold monorepo `main`
+# without manual submodule bumps. On a schedule (and on demand) it checks
+# whether fold `main` has advanced past the pinned `fold/` submodule; if so it
+# bumps the pin on the `auto/fold-dev` branch and triggers the existing
+# `deploy.yml` pipeline on that branch.
+#
+# DEV only — PROD stays a deliberate gate:
+#   - `deploy.yml`'s deploy-prod job is `if: github.ref == 'refs/heads/main'`,
+#     so a dispatch on `auto/fold-dev` runs build + deploy-dev + smoke and
+#     SKIPS prod.
+#   - The prod OIDC role (SchemaInfraDeployProd) only trusts
+#     `sub: repo:EdgeVector/schema-infra:ref:refs/heads/main`, so prod creds
+#     are unassumable from this branch even if the `if:` gate were removed.
+#   To ship to PROD: bump the `fold/` submodule on `main` (or merge
+#   `auto/fold-dev` into `main`) — that fires the full dev+prod pipeline.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # poll fold main every 30 minutes
+  workflow_dispatch:
+
+# Never let two bump runs race the branch / collide on a dev deploy.
+concurrency:
+  group: auto-fold-dev-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump-and-deploy-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # `fold/` is a private submodule; GH_PAT is the org secret with read
+          # access. fetch-depth: 0 so we can read the pinned submodule SHA and
+          # push the bump branch.
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Bump fold submodule to latest main (only if it changed)
+        id: bump
+        run: |
+          set -euo pipefail
+          CURRENT=$(git rev-parse HEAD:fold)
+          git -C fold fetch origin main --depth=1
+          LATEST=$(git -C fold rev-parse origin/main)
+          echo "current=$CURRENT"
+          echo "latest=$LATEST"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "fold submodule already at latest main — nothing to deploy."
+            exit 0
+          fi
+          git -C fold checkout "$LATEST"
+          git config user.name  "fold-autobump[bot]"
+          git config user.email "fold-autobump@users.noreply.github.com"
+          git checkout -B auto/fold-dev
+          git add fold
+          git commit -m "chore(auto): bump fold submodule to ${LATEST} for dev deploy"
+          # Force-update: this branch is a disposable dev pointer, always
+          # fast-forwarded to the latest fold main.
+          git push -f origin auto/fold-dev
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger DEV deploy on the bump branch (prod is skipped — ref != main)
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh workflow run deploy.yml \
+            --repo "${{ github.repository }}" \
+            --ref auto/fold-dev
+          echo "Triggered deploy.yml on auto/fold-dev → DEV deploy + smoke."
+          echo "fold now ${{ steps.bump.outputs.latest }} on dev. PROD unchanged."
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.bump.outputs.changed }}" = "true" ]; then
+            echo "✅ Bumped fold → ${{ steps.bump.outputs.latest }} and triggered DEV deploy." >> "$GITHUB_STEP_SUMMARY"
+            echo "PROD stays at the \`main\` pin until a human bumps fold on main." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No change — fold submodule already at latest main." >> "$GITHUB_STEP_SUMMARY"
+          fi
