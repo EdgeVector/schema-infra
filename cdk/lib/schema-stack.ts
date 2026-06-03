@@ -550,13 +550,14 @@ exports.handler = async (event) => {
         integrationId: "AppGetIntegrationV1",
       },
       {
-        // POST /v1/apps/mirror — cross-env mirror receiver (Lane B2c).
-        // Peer envs POST an app record here when they register an
-        // app in their own registry. x-mirror-token gated in the
-        // Lambda; safe to mount even when the mirror is inactive.
-        path: "/v1/apps/mirror",
+        // POST /v1/apps/{app_id}/promote — flip a sandbox app to live
+        // (fold #517). Owner-authenticated: Lambda enforces the dev-cert
+        // + `app_promote` ECDSA/Ed25519 signature gate and requires
+        // authorized_publisher, in
+        // `server_lambda/src/main.rs` (POST .../promote arm).
+        path: "/v1/apps/{app_id}/promote",
         methods: [apigwv2.HttpMethod.POST],
-        integrationId: "AppMirrorIntegrationV1",
+        integrationId: "AppPromoteIntegrationV1",
       },
       {
         // POST /v1/triggers/simulate — stateless trigger dry-run.
