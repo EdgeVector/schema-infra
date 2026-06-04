@@ -37,6 +37,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-docker-build-
 
+      # Cache the fastembed model files (90 MB ONNX + 4 tokenizer files) so
+      # build.sh's "=== Fastembed Layer ===" step finds them already present
+      # and SKIPS the HuggingFace download. HF hard-rate-limits CI runners
+      # (HTTP 429) — pulling on every deploy made the prod deploy flap (4
+      # consecutive 429 failures, 2026-06-04). With this cache HF is contacted
+      # only on a cold cache: first run, a deliberate model bump, or a ~7-day
+      # eviction. The key is the pinned HF revision — keep it in sync with
+      # `HF_REVISION` in build.sh (bump both together when changing the model).
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: target/fastembed_layer/
+          key: fastembed-model-5f1b8cd78bc4fb444dd171e59b18f3a3af89a079
+
       - name: Build Lambda + fastembed Layer
         # GH_PAT propagates into the AL2023 Docker container so cargo can
         # fetch private cross-repo git deps (e.g. exemem_common from

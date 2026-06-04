@@ -142,6 +142,27 @@ echo -n "$HF_REVISION" > "$CACHE_ROOT/refs/main"
 
 echo ""
 echo "=== Fastembed Layer ==="
+# Durability: the model files are cached across CI runs by GitHub Actions
+# cache (see deploy.yml's "Cache fastembed model" step, keyed on the pinned
+# HF_REVISION). On a cache HIT the files are already present below and we skip
+# the network entirely — HuggingFace is only ever contacted on a cold cache
+# (first run, a deliberate revision bump, or a ~7-day cache eviction). When we
+# DO hit the network, HF rate-limits CI runners hard (HTTP 429) — a single
+# bare `curl` made the whole prod deploy flap (4 consecutive 429 failures,
+# 2026-06-04). So the cold path retries with exponential backoff.
+download_with_retry() {
+    local url="$1" target="$2"
+    local attempts=6 delay=5 i
+    for ((i = 1; i <= attempts; i++)); do
+        if curl -fsSL -o "$target" "$url"; then
+            return 0
+        fi
+        rm -f "$target"
+        echo "    attempt $i/$attempts failed; retrying in ${delay}s" >&2
+        [ "$i" -lt "$attempts" ] && sleep "$delay" && delay=$((delay * 2))
+    done
+    return 1
+}
 for f in "${MODEL_FILES[@]}"; do
     target="$SNAPSHOT_DIR/$f"
     if [ -s "$target" ]; then
@@ -150,7 +171,13 @@ for f in "${MODEL_FILES[@]}"; do
     fi
     url="https://huggingface.co/$HF_REPO/resolve/$HF_REVISION/$f"
     echo "  [download] $f"
-    curl -fsSL -o "$target" "$url" || { echo "ERROR: failed to download $f"; exit 1; }
+    download_with_retry "$url" "$target" || {
+        echo "ERROR: failed to download $f from HuggingFace after retries." >&2
+        echo "       HF is likely rate-limiting (429). The GitHub Actions cache" >&2
+        echo "       (deploy.yml) normally serves this so HF is rarely hit; if" >&2
+        echo "       this is a cold cache, re-run once the rate limit clears." >&2
+        exit 1
+    }
 done
 echo "Layer dir: $LAYER_DIR"
 ls -la "$SNAPSHOT_DIR"
