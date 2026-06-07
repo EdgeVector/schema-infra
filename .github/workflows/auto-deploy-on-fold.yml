@@ -1,0 +1,109 @@
+name: Auto-deploy on fold change
+
+# Keeps the schema_service Lambda (DEV **and** PROD) current with the fold
+# monorepo `main` without manual submodule bumps. On a schedule (and on
+# demand) it checks whether fold `main` has advanced past the pinned `fold/`
+# submodule; if so it opens a PR bumping the pin on `main` and enables
+# auto-merge. The repo's merge queue runs required checks then merges, and
+# the resulting push to `main` fires `deploy.yml`:
+#
+#   build → deploy-dev → smoke-test-dev → deploy-prod → smoke-test-prod
+#
+# The dev smoke test is the gate: `deploy-prod` needs `smoke-test-dev`, so a
+# fold commit that breaks the service never reaches prod. This is the whole
+# safety model for unattended prod deploys — keep that ordering intact.
+#
+# Why a PR (not a direct push to main): the `default-branch-protection` and
+# `default-branch-merge-queue` rulesets require PRs + the merge queue on
+# `main`, so a bot can't push the bump straight there. `gh pr merge --auto`
+# (no strategy — the merge queue picks it) enables "merge when ready"; the
+# PR enters the queue once required checks pass.
+#
+# Prod still can't be deployed from a feature branch: `deploy.yml`'s
+# deploy-prod / smoke-test-prod jobs are `if: github.ref == 'refs/heads/main'`
+# and the prod OIDC role (SchemaInfraDeployProd) only trusts
+# `sub: repo:EdgeVector/schema-infra:ref:refs/heads/main`.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # poll fold main every 30 minutes
+  workflow_dispatch:
+
+# Never let two bump runs race the branch / stack duplicate PRs.
+concurrency:
+  group: auto-fold-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump-and-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # `fold/` is a private submodule; GH_PAT is the org secret with read
+          # access. fetch-depth: 0 so we can read the pinned submodule SHA and
+          # push the bump branch.
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Open (or skip) a fold-bump PR
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+
+          # Don't stack bumps: if a fold-bump PR is already open (still in
+          # CI or the merge queue), let it land first. The next tick picks
+          # up any newer fold commits once it merges.
+          OPEN=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --head auto/fold-bump --state open --json number -q 'length')
+          if [ "$OPEN" != "0" ]; then
+            echo "A fold-bump PR is already open — skipping until it merges."
+            exit 0
+          fi
+
+          CURRENT=$(git rev-parse HEAD:fold)
+          git -C fold fetch origin main --depth=1
+          LATEST=$(git -C fold rev-parse origin/main)
+          echo "current=$CURRENT"
+          echo "latest=$LATEST"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "fold submodule already at latest main — nothing to deploy."
+            exit 0
+          fi
+
+          git -C fold checkout "$LATEST"
+          git config user.name  "fold-autobump[bot]"
+          git config user.email "fold-autobump@users.noreply.github.com"
+          # Rebuild the branch from the current main each time so it carries
+          # exactly one commit: the submodule bump.
+          git checkout -B auto/fold-bump
+          git add fold
+          git commit -m "chore(auto): bump fold submodule to ${LATEST}"
+          git push -f origin auto/fold-bump
+
+          gh pr create --repo "$GITHUB_REPOSITORY" \
+            --base main --head auto/fold-bump \
+            --title "chore(auto): bump fold submodule to ${LATEST:0:12}" \
+            --body "Automated \`fold/\` submodule bump to \`${LATEST}\`.
+
+          Merging deploys **dev → smoke → prod → smoke** via \`deploy.yml\`.
+          The dev smoke test gates prod, so a broken fold commit can't reach
+          production. Opened by \`.github/workflows/auto-deploy-on-fold.yml\`."
+
+          # No merge strategy: `main` requires the merge queue, which picks
+          # the strategy. --auto enables "merge when ready" so the PR queues
+          # once required checks pass.
+          gh pr merge --repo "$GITHUB_REPOSITORY" auto/fold-bump --auto
+
+          echo "Opened + auto-merge-enabled fold-bump PR for ${LATEST}."
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Auto-deploy poll complete. Any new fold main commit is now en route" >> "$GITHUB_STEP_SUMMARY"
+          echo "to **dev + prod** via an auto-merging PR + \`deploy.yml\`." >> "$GITHUB_STEP_SUMMARY"
