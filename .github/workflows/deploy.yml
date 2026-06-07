@@ -6,6 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+# Serialize deploys so two main pushes (e.g. an auto-bump landing while a
+# manual dispatch is mid-flight) can't run overlapping prod deploys against
+# the same CloudFormation stack. Don't cancel an in-flight deploy — a
+# half-applied CDK change is worse than waiting.
+concurrency:
+  group: deploy-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -244,6 +252,8 @@ jobs:
       # workflow_dispatch on a feature branch can't assume this role even
       # if the `if:` gate above were removed.
       id-token: write
+    outputs:
+      api_url: ${{ steps.cf-outputs.outputs.api_url }}
     env:
       AWS_REGION: us-east-1
     steps:
@@ -287,13 +297,95 @@ jobs:
           # See deploy-dev's GH_PAT comment — same rationale, prod side.
           GH_PAT: ${{ secrets.GH_PAT }}
 
-      - name: Prod deployment summary
+      - name: Get CloudFormation outputs
+        id: cf-outputs
         run: |
           API_URL=$(aws cloudformation describe-stacks \
             --stack-name SchemaServiceStack-prod \
             --region us-east-1 \
             --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceApiUrl`].OutputValue' \
             --output text)
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
           echo "Production deployment completed"
           echo "API: $API_URL"
           echo "Domain: schema.folddb.com"
+
+  # 5. Smoke Test Prod (main branch only).
+  #
+  # Read-only — health + list-schemas + list-views. Deliberately NO write
+  # path (the dev smoke's transform-async-compile step POSTs a real compile
+  # job; we don't pollute the prod registry with test records). The CDK
+  # deploy already shipped by the time this runs, so a failure here does not
+  # roll back — it marks the run red and pings Discord so a human can react.
+  smoke-test-prod:
+    needs: deploy-prod
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      API_URL: ${{ needs.deploy-prod.outputs.api_url }}
+    steps:
+      # Same cold-start rationale as smoke-test-dev: the freshly-deployed
+      # Lambda rebuilds the descriptive-name index from S3 on first invoke,
+      # so wait a beat and give the first probe a generous --max-time.
+      - name: Wait for Lambda cold start
+        run: sleep 10
+
+      - name: Smoke test - health endpoint
+        run: |
+          echo "Testing: GET $API_URL/health"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/health" --max-time 180)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "HTTP $HTTP_CODE: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL: health endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Smoke test - list schemas
+        run: |
+          echo "Testing: GET $API_URL/v1/schemas"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/v1/schemas" --max-time 60)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "HTTP $HTTP_CODE: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL: schemas endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Smoke test - list views
+        run: |
+          echo "Testing: GET $API_URL/v1/views"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$API_URL/v1/views" --max-time 60)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "HTTP $HTTP_CODE: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL: views endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Prod smoke tests passed
+        run: echo "All prod smoke tests passed (health + schemas + views)"
+
+      # Prod is live on the new revision but failing — alert a human. Uses
+      # the org-level DISCORD_WEBHOOK_URL (the same secret the discord-notify
+      # stub inherits). Guarded so a missing secret no-ops instead of failing.
+      - name: Alert Discord on prod smoke failure
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "No DISCORD_WEBHOOK_URL configured — skipping alert."
+            exit 0
+          fi
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          payload=$(jq -nc \
+            --arg title "🚨 schema_service PROD smoke FAILED" \
+            --arg desc "Prod deployed on \`main\` but health/schemas/views smoke failed. Prod is live on the new revision — investigate now." \
+            --arg url "$RUN_URL" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '{embeds:[{title:$title, description:$desc, url:$url, color:15158332, footer:{text:$repo}}]}')
+          curl -fsS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
