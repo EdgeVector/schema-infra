@@ -27,7 +27,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           submodules: recursive
           # schema-infra is public but its `fold/` submodule (the
@@ -35,7 +35,7 @@ jobs:
           # org-level secret with access to private EdgeVector repos.
           token: ${{ secrets.GH_PAT }}
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: |
             .docker-cache/cargo/registry/
@@ -53,7 +53,7 @@ jobs:
       # only on a cold cache: first run, a deliberate model bump, or a ~7-day
       # eviction. The key is the pinned HF revision — keep it in sync with
       # `HF_REVISION` in build.sh (bump both together when changing the model).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: target/fastembed_layer/
           key: fastembed-model-5f1b8cd78bc4fb444dd171e59b18f3a3af89a079
@@ -68,7 +68,7 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: ./build.sh release
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
@@ -76,7 +76,7 @@ jobs:
 
       # Model + tokenizer files ship as a separate Lambda Layer so the
       # function zip stays small. build.sh populates this directory.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
@@ -98,7 +98,7 @@ jobs:
     env:
       AWS_REGION: us-west-2
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           # CDK's `DockerImageCode.fromImageAsset` points at
           # `fold/schema_service/crates/worker/Dockerfile` (inside the
@@ -113,18 +113,18 @@ jobs:
           aws-region: us-west-2
 
       - name: Download Lambda artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           node-version: '18'
           cache: 'npm'
@@ -218,7 +218,7 @@ jobs:
       # `wasm_bytes` API and this step will exit 1 with a crisp
       # "missing field wasm_bytes" message — that's the baseline
       # signal that the worker split hasn't deployed yet.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           sparse-checkout: |
             test/e2e
@@ -257,7 +257,7 @@ jobs:
     env:
       AWS_REGION: us-east-1
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           # Same submodule requirement as deploy-dev — see that job's
           # inline comment. Prod CDK needs the worker Dockerfile path
@@ -270,18 +270,18 @@ jobs:
           aws-region: us-east-1
 
       - name: Download Lambda artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: lambda-schema-service
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: lambda-fastembed-layer
           path: target/fastembed_layer/
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           node-version: '18'
           cache: 'npm'
