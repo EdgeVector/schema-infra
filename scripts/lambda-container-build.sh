@@ -40,38 +40,41 @@ if [ ! -x /build/schema-infra/.docker-cache/cargo/bin/cargo ]; then
 fi
 export PATH="/build/schema-infra/.docker-cache/cargo/bin:$PATH"
 
+# Install cargo-lambda from its PREBUILT release binary, NOT `cargo install`
+# (compile from source). The from-source path was a tar pit on the cache-miss
+# path and caused a multi-hour prod-deploy outage 2026-06-12:
+#   - it recompiles cargo-lambda + deps on every cache miss (the GH Actions
+#     cache stores .docker-cache/cargo/{registry,git}, never bin/), so the
+#     tool is never actually cached;
+#   - that fresh compile broke on the `time 0.3.48` yank (E0119 under stable
+#     rustc);
+#   - and even with that fixed, `cargo install` reported writing the binary to
+#     .docker-cache/cargo/bin/cargo-lambda but that dir did not exist
+#     afterward inside the same container — the runner bind mount did not
+#     persist the write.
+# The prebuilt musl build is a single static binary. Drop it on /usr/local/bin
+# (always on PATH, not bind-mounted, no CARGO_HOME dependency), sha256-pinned
+# so a tampered/rotated asset fails the build instead of shipping silently.
+# Bump cl_ver + cl_sha together; the sha is published at <asset>.sha256.
 if ! command -v cargo-lambda >/dev/null 2>&1; then
-    # --locked compiles cargo-lambda against ITS OWN published Cargo.lock,
-    # not a fresh registry resolve. This is the line that actually broke
-    # the deploy 2026-06-12: on a cache miss the container recompiles
-    # cargo-lambda from source, and an unlocked resolve pulled time 0.3.48
-    # (E0119 under stable rustc), exit 101 BEFORE the schema_service build
-    # (and its --locked) ever ran. The cargo-lambda release ships a
-    # known-good lock; honor it, and pin the version so the tool stays
-    # reproducible.
-    # --root pins the install dir to CARGO_HOME so the absolute-path
-    # invocation below is guaranteed to find it. Do NOT pipe to `tail -1`:
-    # that ate cargo's "be sure to add ... to PATH" warning for days, which
-    # is exactly why "command not found" was a mystery.
-    cargo install cargo-lambda --version 1.9.1 --locked --root "$CARGO_HOME"
+    cl_ver=1.9.1
+    cl_sha=ff97518ea2b3c094fb385563f0784fef9191efcdc775101f4f80613820c050ec
+    cl_url="https://github.com/cargo-lambda/cargo-lambda/releases/download/v${cl_ver}/cargo-lambda-v${cl_ver}.x86_64-unknown-linux-musl.tar.gz"
+    curl -fsSL "$cl_url" -o /tmp/cargo-lambda.tar.gz
+    echo "${cl_sha}  /tmp/cargo-lambda.tar.gz" | sha256sum -c -
+    tar -xzf /tmp/cargo-lambda.tar.gz -C /usr/local/bin cargo-lambda
+    chmod +x /usr/local/bin/cargo-lambda
 fi
 
-# --locked: build against fold's committed Cargo.lock instead of
-# re-resolving. Without it the AL2023 build picks up whatever the registry
+# --locked: build schema_service against fold's committed Cargo.lock instead
+# of re-resolving. Without it the AL2023 build picks up whatever the registry
 # serves that day — which broke the deploy 2026-06-12 when `time 0.3.48`
 # shipped (E0119 conflicting From impls under stable rustc). fold pins
-# `time 0.3.47`; honor it. Resolution drift now fails as a deliberate
-# lockfile bump, not a silent prod-deploy outage. (cargo-lambda forwards
-# unknown flags through to cargo.)
-# Invoke cargo-lambda by ABSOLUTE PATH under CARGO_HOME/bin (where --root
-# above installs it). On the cache-miss path, neither the `cargo lambda`
-# subcommand form ("no such command: lambda") nor the bare `cargo-lambda`
-# form ("command not found") resolved 2026-06-12 — the install dir was not
-# where PATH expected. Anchoring both install and invocation to
-# $CARGO_HOME makes the lookup unconditional. The ls is a breadcrumb if
-# the install layout ever shifts again.
-ls -la "$CARGO_HOME/bin" || true
-"$CARGO_HOME/bin/cargo-lambda" build \
+# `time 0.3.47`; honor it so resolution drift fails as a deliberate lockfile
+# bump, not a silent prod-deploy outage. cargo-lambda forwards --locked
+# through to the underlying `cargo build`. cargo-lambda is on PATH via
+# /usr/local/bin; `--compiler cargo` uses the rustup cargo installed above.
+cargo-lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
     --target x86_64-unknown-linux-gnu \
