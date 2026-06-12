@@ -74,7 +74,15 @@ fi
 # bump, not a silent prod-deploy outage. cargo-lambda forwards --locked
 # through to the underlying `cargo build`. cargo-lambda is on PATH via
 # /usr/local/bin; `--compiler cargo` uses the rustup cargo installed above.
-cargo-lambda build \
+#
+# The explicit `lambda` first argument is REQUIRED for direct invocation:
+# cargo-lambda is a cargo SUBCOMMAND binary whose clap is rooted at
+# `cargo`, so bare `cargo-lambda build` fails with "unrecognized
+# subcommand 'build' / Usage: cargo <COMMAND>" (deploy runs 27440773877
+# and 27441092930). The earlier reports of invocation forms failing
+# (2026-06-12) were artifacts of the quote-truncation bug — those lines
+# were executing on the runner, not in the container.
+cargo-lambda lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
     --target x86_64-unknown-linux-gnu \
