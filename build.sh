@@ -97,7 +97,11 @@ docker run --rm \
             # BEFORE the schema_service build (and its --locked) ever ran.
             # The cargo-lambda release ships a known-good lock; honor it, and
             # pin the version so the tool stays reproducible.
-            cargo install cargo-lambda --version 1.9.1 --locked 2>&1 | tail -1
+            # --root pins the install dir to CARGO_HOME so the absolute-path
+            # invocation below is guaranteed to find it. Do NOT pipe to
+            # `tail -1`: that ate cargos "be sure to add ... to PATH" warning
+            # for days, which is exactly why "command not found" was a mystery.
+            cargo install cargo-lambda --version 1.9.1 --locked --root "$CARGO_HOME"
         fi
         # --locked: build against fold's committed Cargo.lock instead of
         # re-resolving. Without it the AL2023 build picks up whatever the
@@ -106,14 +110,15 @@ docker run --rm \
         # rustc). fold pins `time 0.3.47`; honor it. Resolution drift now
         # fails as a deliberate lockfile bump, not a silent prod-deploy
         # outage. (cargo-lambda forwards unknown flags through to cargo.)
-        # Invoke the binary directly (cargo-lambda) rather than the cargo
-        # subcommand form (cargo lambda). On the cache-miss path the freshly
-        # `cargo install`-ed cargo-lambda is present (command -v finds it
-        # above) but cargo subcommand resolution still reported
-        # "no such command: lambda" 2026-06-12 — a CARGO_HOME/PATH lookup
-        # quirk the always-cached path never hit. Direct invocation bypasses
-        # that resolver; cargo-lambda is on PATH so it resolves cleanly.
-        cargo-lambda build \
+        # Invoke cargo-lambda by ABSOLUTE PATH under CARGO_HOME/bin (where
+        # --root above installs it). On the cache-miss path, neither the
+        # `cargo lambda` subcommand form ("no such command: lambda") nor the
+        # bare `cargo-lambda` form ("command not found") resolved 2026-06-12 —
+        # the install dir was not where PATH expected. Anchoring both install
+        # and invocation to $CARGO_HOME makes the lookup unconditional. The
+        # ls is a breadcrumb if the install layout ever shifts again.
+        ls -la "$CARGO_HOME/bin" || true
+        "$CARGO_HOME/bin/cargo-lambda" build \
             --profile "${BUILD_PROFILE:-release}" \
             --output-format zip \
             --target x86_64-unknown-linux-gnu \
