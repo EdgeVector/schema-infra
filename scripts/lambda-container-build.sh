@@ -72,9 +72,15 @@ fi
 # shipped (E0119 conflicting From impls under stable rustc). fold pins
 # `time 0.3.47`; honor it so resolution drift fails as a deliberate lockfile
 # bump, not a silent prod-deploy outage. cargo-lambda forwards --locked
-# through to the underlying `cargo build`. cargo-lambda is on PATH via
-# /usr/local/bin; `--compiler cargo` uses the rustup cargo installed above.
-cargo-lambda build \
+# through to the underlying `cargo build`.
+#
+# Invoke via the `cargo lambda` SUBCOMMAND form, not `cargo-lambda build`
+# directly: cargo-lambda is a cargo subcommand whose clap expects argv[1]
+# to be `lambda` (cargo supplies it). `cargo-lambda build` skips that and
+# errors "unrecognized subcommand 'build'". `cargo lambda build` works now
+# that the prebuilt binary is reliably on PATH (/usr/local/bin); the rustup
+# cargo resolves it. Verified in an isolated AL2023 container.
+cargo lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
     --target x86_64-unknown-linux-gnu \
