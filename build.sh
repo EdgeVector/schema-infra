@@ -107,7 +107,7 @@ docker run --rm \
         # fails as a deliberate lockfile bump, not a silent prod-deploy
         # outage. (cargo-lambda forwards unknown flags through to cargo.)
         cargo lambda build \
-            --profile "${BUILD_PROFILE}" \
+            --profile "${BUILD_PROFILE:-release}" \
             --output-format zip \
             --target x86_64-unknown-linux-gnu \
             --compiler cargo \
