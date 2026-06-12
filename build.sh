@@ -89,11 +89,19 @@ docker run --rm \
         if ! command -v cargo-lambda >/dev/null 2>&1; then
             cargo install cargo-lambda 2>&1 | tail -1
         fi
+        # --locked: build against fold's committed Cargo.lock instead of
+        # re-resolving. Without it the AL2023 build picks up whatever the
+        # registry serves that day — which broke the deploy 2026-06-12 when
+        # `time 0.3.48` shipped (E0119 conflicting From impls under stable
+        # rustc). fold pins `time 0.3.47`; honor it. Resolution drift now
+        # fails as a deliberate lockfile bump, not a silent prod-deploy
+        # outage. (cargo-lambda forwards unknown flags through to cargo.)
         cargo lambda build \
             --profile "${BUILD_PROFILE}" \
             --output-format zip \
             --target x86_64-unknown-linux-gnu \
             --compiler cargo \
+            --locked \
             -p schema_service_server_lambda
         chmod -R a+rwX target/lambda/ 2>/dev/null || true
     '
