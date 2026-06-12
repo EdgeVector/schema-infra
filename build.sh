@@ -87,7 +87,17 @@ docker run --rm \
         fi
         export PATH="/build/schema-infra/.docker-cache/cargo/bin:$PATH"
         if ! command -v cargo-lambda >/dev/null 2>&1; then
-            cargo install cargo-lambda 2>&1 | tail -1
+            # NOTE: this whole block runs inside a single-quoted bash -c
+            # string, so comments here must avoid apostrophes.
+            # --locked compiles cargo-lambda against ITS OWN published
+            # Cargo.lock, not a fresh registry resolve. This is the line that
+            # actually broke the deploy 2026-06-12: on a cache miss the
+            # container recompiles cargo-lambda from source, and an unlocked
+            # resolve pulled time 0.3.48 (E0119 under stable rustc), exit 101
+            # BEFORE the schema_service build (and its --locked) ever ran.
+            # The cargo-lambda release ships a known-good lock; honor it, and
+            # pin the version so the tool stays reproducible.
+            cargo install cargo-lambda --version 1.9.1 --locked 2>&1 | tail -1
         fi
         # --locked: build against fold's committed Cargo.lock instead of
         # re-resolving. Without it the AL2023 build picks up whatever the
