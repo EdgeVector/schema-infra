@@ -113,7 +113,7 @@ docker run --rm \
             # invocation below is guaranteed to find it. Do NOT pipe to
             # `tail -1`: that ate cargos "be sure to add ... to PATH" warning
             # for days, which is exactly why "command not found" was a mystery.
-            cargo install cargo-lambda --version 1.9.1 --locked --root "$CARGO_HOME"
+            cargo install cargo-lambda --version 1.9.1 --locked --root /build/schema-infra/.docker-cache/cargo
         fi
         # --locked: build against fold's committed Cargo.lock instead of
         # re-resolving. Without it the AL2023 build picks up whatever the
@@ -122,15 +122,15 @@ docker run --rm \
         # rustc). fold pins `time 0.3.47`; honor it. Resolution drift now
         # fails as a deliberate lockfile bump, not a silent prod-deploy
         # outage. (cargo-lambda forwards unknown flags through to cargo.)
-        # Invoke cargo-lambda by ABSOLUTE PATH under CARGO_HOME/bin (where
-        # --root above installs it). On the cache-miss path, neither the
-        # `cargo lambda` subcommand form ("no such command: lambda") nor the
-        # bare `cargo-lambda` form ("command not found") resolved 2026-06-12 —
-        # the install dir was not where PATH expected. Anchoring both install
-        # and invocation to $CARGO_HOME makes the lookup unconditional. The
-        # ls is a breadcrumb if the install layout ever shifts again.
-        ls -la "$CARGO_HOME/bin" || true
-        "$CARGO_HOME/bin/cargo-lambda" build \
+        # Invoke cargo-lambda by its LITERAL install path. $CARGO_HOME was
+        # observed unbound here under set -u 2026-06-12 even after an
+        # explicit defensive export AND a successful `cargo install --root
+        # "$CARGO_HOME"` one line earlier (paradoxical, never root-caused) —
+        # so reference the variable nowhere on the hot path. --root above
+        # and PATH (line 88) already hardcode this same literal dir, so this
+        # is the one value guaranteed correct. The ls is a breadcrumb.
+        ls -la /build/schema-infra/.docker-cache/cargo/bin || true
+        /build/schema-infra/.docker-cache/cargo/bin/cargo-lambda build \
             --profile "${BUILD_PROFILE:-release}" \
             --output-format zip \
             --target x86_64-unknown-linux-gnu \
