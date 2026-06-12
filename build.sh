@@ -74,6 +74,18 @@ docker run --rm \
     amazonlinux:2023 \
     bash -c '
         set -euo pipefail
+        # Defensively bind the env this script depends on. The docker run
+        # passes these via -e, but they were observed UNBOUND inside the
+        # container 2026-06-12 (set -u tripped on CARGO_HOME). An unbound
+        # CARGO_HOME is the root of the whole cargo-lambda saga: `cargo
+        # install` then drops the binary in the default ~/.cargo/bin instead
+        # of the .docker-cache/cargo/bin that PATH below covers, so every
+        # later invocation hit "command not found". Pin them to the same
+        # literals the docker -e flags use so the rest of the block is robust
+        # whether or not -e propagated.
+        export CARGO_HOME="${CARGO_HOME:-/build/schema-infra/.docker-cache/cargo}"
+        export RUSTUP_HOME="${RUSTUP_HOME:-/build/schema-infra/.docker-cache/rustup}"
+        export BUILD_PROFILE="${BUILD_PROFILE:-release}"
         yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
         # Cargo needs to fetch private cross-repo git deps (e.g.
         # exemem_common from EdgeVector/exemem-infra). Conditional on
