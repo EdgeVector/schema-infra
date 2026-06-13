@@ -389,3 +389,34 @@ jobs:
             --arg repo "$GITHUB_REPOSITORY" \
             '{embeds:[{title:$title, description:$desc, url:$url, color:15158332, footer:{text:$repo}}]}')
           curl -fsS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
+
+  # 6. Notify on ANY deploy-pipeline failure.
+  #
+  # The per-job `smoke-test-prod` alert above only fires once prod is live —
+  # it can't catch a `build` failure (the run that sat silently red for ~2
+  # weeks, 2026-05-30 → 2026-06-12, was a build break before any deploy step).
+  # This job `needs:` every job and runs `if: failure()`, so a failure
+  # ANYWHERE in the pipeline pages a human with the run URL. It does NOT run on
+  # a green pipeline (no channel spam) and is skipped — not failed — when
+  # deploy-prod/smoke-test-prod themselves skip on non-main refs.
+  notify-failure:
+    needs: [build, deploy-dev, smoke-test-dev, deploy-prod, smoke-test-prod]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alert Discord on deploy-pipeline failure
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "No DISCORD_WEBHOOK_URL configured — skipping alert."
+            exit 0
+          fi
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          payload=$(jq -nc \
+            --arg title "🚨 schema-infra Deploy Pipeline FAILED" \
+            --arg desc "A job in the schema-infra deploy pipeline on \`${GITHUB_REF_NAME}\` failed. prod schema_service may be frozen on the last green revision — investigate now." \
+            --arg url "$RUN_URL" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '{embeds:[{title:$title, description:$desc, url:$url, color:15158332, footer:{text:$repo}}]}')
+          curl -fsS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
