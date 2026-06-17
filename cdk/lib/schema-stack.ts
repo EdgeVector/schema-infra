@@ -11,6 +11,7 @@ import {
 import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
@@ -804,6 +805,17 @@ exports.handler = async (event) => {
             buildArgs: {
               GH_PAT: process.env.GH_PAT ?? "",
             },
+            // Pin the image build to linux/amd64 so it matches the
+            // x86_64 worker Lambda (DockerImageFunction defaults to
+            // X86_64). Without this, a local `./deploy.sh dev` from an
+            // Apple-Silicon (arm64) host builds an arm64 image and the
+            // x86_64 Lambda fails every invocation with
+            // `Runtime.InvalidEntrypoint`. CI deploys from x86_64
+            // runners so the host arch already matched there; this just
+            // makes local-from-arm64 deploys correct too. Mirrors the
+            // `--platform linux/amd64` pin already in build.sh for the
+            // request-path Lambda zip Docker build.
+            platform: Platform.LINUX_AMD64,
           },
         ),
         memorySize: 4096,
