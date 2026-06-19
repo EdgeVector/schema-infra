@@ -137,6 +137,10 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-west-2
           CDK_DEFAULT_REGION: us-west-2
+          # Backend Sentry DSN baked into the Lambda + compile worker env at
+          # synth time (schema-stack.ts reads process.env.OBS_SENTRY_DSN).
+          # Empty secret → sink stays off. Write-only client token.
+          OBS_SENTRY_DSN: ${{ secrets.OBS_SENTRY_DSN }}
           # GH_PAT propagates into the TransformCompileWorker Docker
           # build (via cdk schema-stack.ts buildArgs → Dockerfile ARG).
           # Required for cargo to fetch private cross-repo deps
@@ -294,6 +298,10 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
           CDK_DEFAULT_REGION: us-east-1
+          # Backend Sentry DSN baked into the Lambda + compile worker env at
+          # synth time (schema-stack.ts reads process.env.OBS_SENTRY_DSN).
+          # Empty secret → sink stays off. Write-only client token.
+          OBS_SENTRY_DSN: ${{ secrets.OBS_SENTRY_DSN }}
           # See deploy-dev's GH_PAT comment — same rationale, prod side.
           GH_PAT: ${{ secrets.GH_PAT }}
 
