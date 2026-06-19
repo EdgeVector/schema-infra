@@ -34,6 +34,16 @@ export class SchemaServiceStack extends Stack {
     const envName = props?.environment || "dev";
     const isProd = envName === "prod";
 
+    // Backend Sentry DSN, added to the request-path Lambda and the compile
+    // worker below. Sourced from the OBS_SENTRY_DSN secret at synth time
+    // (deploy.yml / deploy.sh export it). Empty when unset, in which case
+    // `observability::init_lambda` leaves the Sentry sink off and CloudWatch
+    // logging is unchanged. Like the frontend's VITE_SENTRY_DSN it is a
+    // write-only client token, not a confidential secret, so a plaintext env
+    // var is appropriate; init_lambda reads OBS_SENTRY_DSN directly and does
+    // not support a Secrets Manager ARN.
+    const obsSentryDsn = process.env.OBS_SENTRY_DSN ?? "";
+
     // =====================================================
     // S3 Bucket for Schema Service state
     //
@@ -231,6 +241,7 @@ exports.handler = async (event) => {
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
+        OBS_SENTRY_DSN: obsSentryDsn,
         ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
         // The schema service persists all state in this S3 bucket via
         // S3BlobPersistence. No filesystem required, no VPC, no EFS.
@@ -824,6 +835,7 @@ exports.handler = async (event) => {
         reservedConcurrentExecutions: 5,
         environment: {
           RUST_LOG: "info",
+          OBS_SENTRY_DSN: obsSentryDsn,
           // Same S3 bucket as the request-path Lambda — the worker
           // writes wasm/{hash}.wasm + source/{hash}.rs + transforms.json
           // atomically there, which the request-path Lambda's later
