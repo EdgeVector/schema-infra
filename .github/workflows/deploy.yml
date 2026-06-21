@@ -234,30 +234,18 @@ jobs:
             exit 1
           fi
 
-      # `projects/transform-worker-split` Lane E post-deploy smoke:
-      # end-to-end exercise of the async compile worker. Posts a
-      # minimal Rust source, polls GET /v1/transform-jobs/{id} until
-      # the worker commits, validates the final TransformRecord.
-      # Until the schema-infra submodule pointer bumps past MDT-E
-      # (commit 4622640), the deployed Lambda still serves the legacy
-      # `wasm_bytes` API and this step will exit 1 with a crisp
-      # "missing field wasm_bytes" message — that's the baseline
-      # signal that the worker split hasn't deployed yet.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
-        with:
-          sparse-checkout: |
-            test/e2e
-          sparse-checkout-cone-mode: false
-      - name: Smoke test - transform async compile flow
-        env:
-          API_URL: ${{ env.API_URL }}
-          TIMEOUT_SECS: "180"
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq jq
-          bash test/e2e/transform-async-flow.sh
-
+      # NOTE: the async-compile transform smoke (POST rust_source →
+      # poll GET /v1/transform-jobs/{id}) was removed when fold #978
+      # ("transform submission is binary-only — drop server-side
+      # compile") deleted that endpoint and the whole async-job model.
+      # A proper binary-only replacement (POST a pre-compiled
+      # `wasm_bytes` module and assert it registers) needs a committed,
+      # known-good WASM fixture + the app-identity handshake, so it's
+      # tracked separately rather than stubbed in here. Dev smoke now
+      # covers the same surface as prod smoke (health + schemas +
+      # views). See fkanban `schema-infra-binary-only-transform-smoke`.
       - name: Smoke tests passed
-        run: echo "All dev smoke tests passed (health + schemas + views + transform async flow)"
+        run: echo "All dev smoke tests passed (health + schemas + views)"
 
   # 4. Deploy to Prod (main branch only).
   #
@@ -342,9 +330,10 @@ jobs:
   # 5. Smoke Test Prod (main branch only).
   #
   # Read-only — health + list-schemas + list-views. Deliberately NO write
-  # path (the dev smoke's transform-async-compile step POSTs a real compile
-  # job; we don't pollute the prod registry with test records). The CDK
-  # deploy already shipped by the time this runs, so a failure here does not
+  # path so we don't pollute the prod registry with test records. (Dev
+  # smoke covers the same read-only surface; a binary-only transform
+  # write smoke is tracked separately — see the note in smoke-test-dev.)
+  # The CDK deploy already shipped by the time this runs, so a failure does not
   # roll back — it marks the run red and pings Discord so a human can react.
   smoke-test-prod:
     needs: deploy-prod
