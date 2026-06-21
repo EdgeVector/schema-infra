@@ -58,24 +58,45 @@ jobs:
           path: target/fastembed_layer/
           key: fastembed-model-5f1b8cd78bc4fb444dd171e59b18f3a3af89a079
 
-      - name: Build Lambda + fastembed Layer
-        # GH_PAT propagates into the AL2023 Docker container so cargo can
-        # fetch private cross-repo git deps (e.g. exemem_common from
-        # EdgeVector/exemem-infra). Without it, the container starts with
-        # no git config and cargo's git fetcher hits public github.com
-        # anonymously and fails auth.
+      # Build the PROD Lambda zip first — measured-NMI engine OFF
+      # (ENABLE_TRANSFORM_WASM defaults to 0). The prod binary must NOT link
+      # the live WASM execution engine; prod enablement is the separate human
+      # gate `gate1-prod-cutover-transform-wasm`. GH_PAT propagates into the
+      # AL2023 Docker container so cargo can fetch private cross-repo git deps
+      # (e.g. exemem_common from EdgeVector/exemem-infra); without it the
+      # container has no git config and cargo's git fetcher hits public
+      # github.com anonymously and fails auth.
+      - name: Build PROD Lambda (transform-wasm OFF) + fastembed Layer
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          ENABLE_TRANSFORM_WASM: '0'
         run: ./build.sh release
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
-          name: lambda-schema-service
+          name: lambda-schema-service-prod
+          path: fold/target/lambda/server_lambda-extracted/
+          retention-days: 1
+
+      # Build the DEV Lambda zip — measured-NMI engine ON. Reuses the same
+      # Docker layer + fold/target cargo cache, so only the feature-gated
+      # crates recompile. Card schema-service-enable-measured-nmi-engine.
+      - name: Build DEV Lambda (transform-wasm ON)
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          ENABLE_TRANSFORM_WASM: '1'
+        run: ./build.sh release
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        with:
+          name: lambda-schema-service-dev
           path: fold/target/lambda/server_lambda-extracted/
           retention-days: 1
 
       # Model + tokenizer files ship as a separate Lambda Layer so the
-      # function zip stays small. build.sh populates this directory.
+      # function zip stays small. Feature-independent — one artifact for both
+      # environments. build.sh populates this directory (idempotent across the
+      # two builds above).
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
           name: lambda-fastembed-layer
@@ -112,10 +133,10 @@ jobs:
           role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployDev
           aws-region: us-west-2
 
-      - name: Download Lambda artifact
+      - name: Download Lambda artifact (dev — transform-wasm ON)
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
-          name: lambda-schema-service
+          name: lambda-schema-service-dev
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
@@ -273,10 +294,10 @@ jobs:
           role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployProd
           aws-region: us-east-1
 
-      - name: Download Lambda artifact
+      - name: Download Lambda artifact (prod — transform-wasm OFF)
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
-          name: lambda-schema-service
+          name: lambda-schema-service-prod
           path: fold/target/lambda/server_lambda-extracted/
 
       - name: Download fastembed layer artifact
