@@ -25,6 +25,14 @@ set -euo pipefail
 export CARGO_HOME="${CARGO_HOME:-/build/schema-infra/.docker-cache/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-/build/schema-infra/.docker-cache/rustup}"
 export BUILD_PROFILE="${BUILD_PROFILE:-release}"
+# Measured-NMI transform engine gate (card schema-service-enable-measured-nmi-engine).
+# When "1", the Lambda is built `--features transform-wasm`, which links the
+# live submitted-WASM validator + NMI sampler so transform-output classification
+# is MEASURED instead of falling back to the input ceiling. DEFAULT OFF so the
+# prod build ships WITHOUT the live WASM engine — prod enablement is the separate
+# human gate `gate1-prod-cutover-transform-wasm`. schema-infra's CI sets this to
+# "1" for the DEV build only (build.sh forwards it via docker -e).
+export ENABLE_TRANSFORM_WASM="${ENABLE_TRANSFORM_WASM:-0}"
 
 yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
 
@@ -80,11 +88,24 @@ fi
 # errors "unrecognized subcommand 'build'". `cargo lambda build` works now
 # that the prebuilt binary is reliably on PATH (/usr/local/bin); the rustup
 # cargo resolves it. Verified in an isolated AL2023 container.
+# Build the feature flag list. The measured-NMI engine is opt-in
+# (ENABLE_TRANSFORM_WASM=1, DEV only) so the prod build never links the
+# live WASM execution engine. `cargo lambda build` forwards `--features`
+# down to the underlying `cargo build`.
+FEATURE_ARGS=()
+if [ "$ENABLE_TRANSFORM_WASM" = "1" ]; then
+    echo "ENABLE_TRANSFORM_WASM=1 → building with --features transform-wasm (measured-NMI engine ON)"
+    FEATURE_ARGS+=(--features transform-wasm)
+else
+    echo "ENABLE_TRANSFORM_WASM=0 → measured-NMI engine OFF (Phase-1 ceiling classification)"
+fi
+
 cargo lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
     --target x86_64-unknown-linux-gnu \
     --compiler cargo \
     --locked \
-    -p schema_service_server_lambda
+    -p schema_service_server_lambda \
+    "${FEATURE_ARGS[@]}"
 chmod -R a+rwX target/lambda/ 2>/dev/null || true

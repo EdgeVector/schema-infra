@@ -21,9 +21,17 @@ done
 if [ "$ENVIRONMENT" = "prod" ]; then
     REGION="us-east-1"
     BUILD_PROFILE="release"
+    # Measured-NMI transform engine stays OFF in prod — prod cutover is the
+    # separate human gate `gate1-prod-cutover-transform-wasm`. Keep the live
+    # WASM engine out of the prod Lambda binary entirely.
+    export ENABLE_TRANSFORM_WASM=0
 else
     REGION="us-west-2"
     BUILD_PROFILE="dev-release"
+    # DEV runs the live measured-NMI engine so transform-output classification
+    # is measured, not fallback-to-ceiling
+    # (card schema-service-enable-measured-nmi-engine).
+    export ENABLE_TRANSFORM_WASM=1
 fi
 
 echo "=== Deploying Schema Service Infrastructure ==="
