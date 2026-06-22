@@ -32,7 +32,21 @@ export BUILD_PROFILE="${BUILD_PROFILE:-release}"
 # prod build ships WITHOUT the live WASM engine — prod enablement is the separate
 # human gate `gate1-prod-cutover-transform-wasm`. schema-infra's CI sets this to
 # "1" for the DEV build only (build.sh forwards it via docker -e).
+#
+# HARDENING (card schema-infra-wire-transform-wasm-dev-gate): the gate is
+# STRUCTURALLY dev-only with a prod-asserted-off backstop. ENABLE_TRANSFORM_WASM
+# alone is not trusted — the engine is appended ONLY when the resolved deploy
+# environment is `dev`, and if the var is ever truthy for a non-dev (prod, or an
+# unresolved/blank) environment the build HARD-FAILS here. So a careless future
+# change that turns the var on for prod can never silently ship the
+# untrusted-third-party-WASM RCE surface to end users — that prod default-on flip
+# is a separate business+security human gate (decisions-log
+# `wasm-enable-shipping-feature` / `gate1-prod-cutover-transform-wasm`), NOT
+# something this build path can reach. DEPLOY_ENV is forwarded by build.sh (-e)
+# from deploy.sh's resolved $ENVIRONMENT; a missing/blank value is treated as
+# NOT dev (fail safe).
 export ENABLE_TRANSFORM_WASM="${ENABLE_TRANSFORM_WASM:-0}"
+export DEPLOY_ENV="${DEPLOY_ENV:-}"
 
 yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
 
@@ -92,10 +106,26 @@ fi
 # (ENABLE_TRANSFORM_WASM=1, DEV only) so the prod build never links the
 # live WASM execution engine. `cargo lambda build` forwards `--features`
 # down to the underlying `cargo build`.
+#
+# Dev-only gate + prod-asserted-off backstop (see ENABLE_TRANSFORM_WASM /
+# DEPLOY_ENV comment above):
+#   * var != 1                 -> stub everywhere (default, unchanged behavior).
+#   * var == 1 AND env == dev  -> append --features transform-wasm (dev only).
+#   * var == 1 AND env != dev  -> HARD FAIL: prod (or any non-dev/unresolved
+#                                 env) can never build the WASM engine here.
 FEATURE_ARGS=()
 if [ "$ENABLE_TRANSFORM_WASM" = "1" ]; then
-    echo "ENABLE_TRANSFORM_WASM=1 → building with --features transform-wasm (measured-NMI engine ON)"
-    FEATURE_ARGS+=(--features transform-wasm)
+    if [ "$DEPLOY_ENV" = "dev" ]; then
+        echo "ENABLE_TRANSFORM_WASM=1 + DEPLOY_ENV=dev → building with --features transform-wasm (measured-NMI engine ON, DEV only)"
+        FEATURE_ARGS+=(--features transform-wasm)
+    else
+        echo "FATAL: ENABLE_TRANSFORM_WASM=1 but DEPLOY_ENV='${DEPLOY_ENV}' is not 'dev'." >&2
+        echo "       The transform-wasm engine is dev-only and prod-asserted-off — refusing to" >&2
+        echo "       build a non-dev Lambda with the live WASM engine. Shipping untrusted" >&2
+        echo "       third-party transform code to end users is a separate human gate" >&2
+        echo "       (wasm-enable-shipping-feature / gate1-prod-cutover-transform-wasm)." >&2
+        exit 1
+    fi
 else
     echo "ENABLE_TRANSFORM_WASM=0 → measured-NMI engine OFF (Phase-1 ceiling classification)"
 fi

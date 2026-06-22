@@ -72,6 +72,7 @@ docker run --rm \
     -e BUILD_PROFILE="$PROFILE" \
     -e GH_PAT="${GH_PAT:-}" \
     -e ENABLE_TRANSFORM_WASM="${ENABLE_TRANSFORM_WASM:-0}" \
+    -e DEPLOY_ENV="${DEPLOY_ENV:-}" \
     amazonlinux:2023 \
     bash /build/schema-infra/scripts/lambda-container-build.sh
 

@@ -70,6 +70,11 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           ENABLE_TRANSFORM_WASM: '0'
+          # DEPLOY_ENV feeds the container build's dev-only + prod-asserted-off
+          # gate. With ENABLE_TRANSFORM_WASM=0 the gate is inert, but set it
+          # explicitly so prod can never resolve as "dev" and the asserted-off
+          # invariant is exercised on the real prod build path.
+          DEPLOY_ENV: prod
         run: ./build.sh release
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
@@ -85,6 +90,10 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           ENABLE_TRANSFORM_WASM: '1'
+          # DEV is the ONLY environment allowed to build the transform-wasm
+          # engine. The container gate refuses ENABLE_TRANSFORM_WASM=1 unless
+          # DEPLOY_ENV=dev, so this MUST be set for the dev build to succeed.
+          DEPLOY_ENV: dev
         run: ./build.sh release
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0

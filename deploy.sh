@@ -17,13 +17,20 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# Forward the resolved environment into the (containerized) build so the
+# transform-wasm gate in lambda-container-build.sh can enforce its dev-only +
+# prod-asserted-off invariant structurally (not just by trusting the var below).
+export DEPLOY_ENV="$ENVIRONMENT"
+
 # Determine region based on environment
 if [ "$ENVIRONMENT" = "prod" ]; then
     REGION="us-east-1"
     BUILD_PROFILE="release"
     # Measured-NMI transform engine stays OFF in prod — prod cutover is the
     # separate human gate `gate1-prod-cutover-transform-wasm`. Keep the live
-    # WASM engine out of the prod Lambda binary entirely.
+    # WASM engine out of the prod Lambda binary entirely. (The container build
+    # ALSO hard-fails if this is ever truthy for a non-dev env — defense in
+    # depth so a careless edit here can't silently ship the engine to prod.)
     export ENABLE_TRANSFORM_WASM=0
 else
     REGION="us-west-2"
