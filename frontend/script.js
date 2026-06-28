@@ -58,7 +58,7 @@ async function init() {
 
 function setupEventListeners() {
   // Search
-  elements.schemaSearch.addEventListener("input", debounce(handleSearch, 300));
+  elements.schemaSearch.addEventListener("input", debounce(renderSchemas, 300));
 
   // Filter buttons
   elements.filterButtons.forEach((btn) => {
@@ -163,10 +163,6 @@ function hideAllStates() {
 }
 
 // Filtering and Search
-function handleSearch(e) {
-  renderSchemas();
-}
-
 function handleFilter(filter) {
   currentFilter = filter;
 
