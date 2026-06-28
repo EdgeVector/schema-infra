@@ -291,6 +291,11 @@ exports.handler = async (event) => {
     // Lambda bug can't touch unrelated keys in the bucket.
     schemaBucket.grantReadWrite(schemaServiceFn);
 
+    // Every route below points at the same `schemaServiceFn`, so this
+    // helper closes over it — call sites just supply the integration id.
+    const lambdaIntegration = (id: string) =>
+      new apigwv2Integrations.HttpLambdaIntegration(id, schemaServiceFn);
+
     // =====================================================
     // HTTP API Gateway with CORS
     // =====================================================
@@ -320,20 +325,14 @@ exports.handler = async (event) => {
     httpApi.addRoutes({
       path: "/",
       methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaRootIntegration",
-        schemaServiceFn,
-      ),
+      integration: lambdaIntegration("SchemaRootIntegration"),
     });
 
     // Health check endpoint
     httpApi.addRoutes({
       path: "/health",
       methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaHealthIntegration",
-        schemaServiceFn,
-      ),
+      integration: lambdaIntegration("SchemaHealthIntegration"),
     });
 
     // =====================================================
@@ -408,18 +407,12 @@ exports.handler = async (event) => {
       httpApi.addRoutes({
         path: route.api,
         methods: route.methods,
-        integration: new apigwv2Integrations.HttpLambdaIntegration(
-          route.integrationId,
-          schemaServiceFn,
-        ),
+        integration: lambdaIntegration(route.integrationId),
       });
       httpApi.addRoutes({
         path: route.v1,
         methods: route.methods,
-        integration: new apigwv2Integrations.HttpLambdaIntegration(
-          `${route.integrationId}V1`,
-          schemaServiceFn,
-        ),
+        integration: lambdaIntegration(`${route.integrationId}V1`),
       });
     }
 
@@ -427,10 +420,7 @@ exports.handler = async (event) => {
     httpApi.addRoutes({
       path: "/v1/health",
       methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "SchemaHealthIntegrationV1",
-        schemaServiceFn,
-      ),
+      integration: lambdaIntegration("SchemaHealthIntegrationV1"),
     });
 
     // =====================================================
@@ -571,10 +561,7 @@ exports.handler = async (event) => {
       httpApi.addRoutes({
         path: route.path,
         methods: route.methods,
-        integration: new apigwv2Integrations.HttpLambdaIntegration(
-          route.integrationId,
-          schemaServiceFn,
-        ),
+        integration: lambdaIntegration(route.integrationId),
       });
     }
 
