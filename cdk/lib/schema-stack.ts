@@ -17,17 +17,21 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as cr from "aws-cdk-lib/custom-resources";
+import { Environment } from "./environment";
 
 export interface SchemaServiceStackProps extends StackProps {
-  environment?: string; // 'dev' or 'prod'
+  environment?: string;
 }
 
 export class SchemaServiceStack extends Stack {
   constructor(scope: Construct, id: string, props?: SchemaServiceStackProps) {
     super(scope, id, props);
 
-    const envName = props?.environment || "dev";
-    const isProd = envName === "prod";
+    const environment = Environment.fromName(
+      props?.environment,
+      Stack.of(this).account,
+    );
+    const envName = environment.name;
 
     // Backend Sentry DSN, added to the request-path Lambda and the compile
     // worker below. Sourced from the OBS_SENTRY_DSN secret at synth time
@@ -251,7 +255,7 @@ exports.handler = async (event) => {
         // (`68e3a`) lands + threshold tuning settles. Phase D backfill
         // populated `purpose_statement` on every existing canonical in
         // this bucket, so the embedder has a real second signal here.
-        ...(envName === "dev"
+        ...(environment.isDev
           ? { SCHEMA_DUAL_SIGNAL_CANONICALIZATION: "true" }
           : {}),
         // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
@@ -607,7 +611,9 @@ exports.handler = async (event) => {
       // free to keep around, and accidental destroy would force every
       // cold start to re-embed until the warm-embeddings backfill
       // re-ran.
-      removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      removalPolicy: environment.isProd
+        ? RemovalPolicy.RETAIN
+        : RemovalPolicy.DESTROY,
     });
 
     // Request-path Lambda reads + writes the embeddings table:
@@ -663,11 +669,13 @@ exports.handler = async (event) => {
     // "SchemaDomainName", "SchemaApiMapping"). Changing them causes
     // CloudFormation to delete+recreate the API Gateway domain, which
     // generates a new CNAME target and requires a DNS update.
-    if (isProd) {
+    if (environment.isProd) {
       const schemaCert = acm.Certificate.fromCertificateArn(
         this,
         "SchemaDomainCert",
-        "arn:aws:acm:us-east-1:152335099025:certificate/18c59c49-1581-48b4-ba6c-402bfd3ac2d6",
+        environment.acmCertificateArn(
+          "18c59c49-1581-48b4-ba6c-402bfd3ac2d6",
+        ),
       );
 
       const schemaDomainName = new apigwv2.DomainName(

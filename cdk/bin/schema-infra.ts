@@ -3,23 +3,19 @@ import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 import { SchemaServiceStack } from "../lib/schema-stack";
 import { SchemaInfraOidcStack } from "../lib/schema-infra-oidc-stack";
+import { Environment } from "../lib/environment";
 
 const app = new cdk.App();
 
-// Get environment from context or default to dev
-const environment = app.node.tryGetContext("environment") || "dev";
+const environment = Environment.fromName(app.node.tryGetContext("environment"));
 
-// Determine region based on environment
-// Schema service uses us-west-2 for dev, us-east-1 for prod
-const region = environment === "prod" ? "us-east-1" : "us-west-2";
-
-new SchemaServiceStack(app, `SchemaServiceStack-${environment}`, {
-  environment,
+new SchemaServiceStack(app, `SchemaServiceStack-${environment.name}`, {
+  environment: environment.name,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: region,
+    region: environment.region,
   },
-  description: `FoldDB Schema Service Infrastructure (${environment})`,
+  description: `FoldDB Schema Service Infrastructure (${environment.name})`,
 });
 
 // Account-global IAM stack for the GitHub Actions OIDC provider + the
