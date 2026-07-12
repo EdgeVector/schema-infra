@@ -156,7 +156,7 @@ jobs:
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
-          node-version: '18'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: cdk/package-lock.json
       - run: cd cdk && npm ci
@@ -305,7 +305,7 @@ jobs:
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
-          node-version: '18'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: cdk/package-lock.json
       - run: cd cdk && npm ci
