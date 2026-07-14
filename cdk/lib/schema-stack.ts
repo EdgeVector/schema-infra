@@ -511,6 +511,14 @@ exports.handler = async (event) => {
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SnapshotExportIntegrationV1",
       },
+      {
+        // Auth-gated shared-only registry export for resolver packs.
+        // The Lambda dispatch arm already exists in the fold submodule;
+        // mounting the Gateway route keeps prod from 404ing before auth.
+        path: "/v1/snapshot/shared-only",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SnapshotSharedOnlyExportIntegrationV1",
+      },
       // =====================================================
       // App identity v3.1 (Lanes B2b / B2c).
       //
