@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
-for f in ./*.sh .lastgit/*.sh scripts/*.sh 2>/dev/null; do
+for f in ./*.sh .lastgit/*.sh scripts/*.sh; do
   [ -e "$f" ] || continue
+  echo "bash -n $f"
   bash -n "$f"
 done
 echo "== npm/cdk compile =="
