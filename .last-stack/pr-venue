@@ -1,3 +1,4 @@
 lastgit
 # Gate of record for EdgeVector/schema-infra: LastGit CRs on lastdb:///schema-infra.
 # Automatic AWS deploy: forge-host LastGit deploy-pipeline (not GitHub Actions push).
+# GitHub is a public read-only mirror; do not open or merge PRs there.
