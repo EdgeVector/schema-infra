@@ -1,4 +1,12 @@
 lastgit
-# Gate of record for EdgeVector/schema-infra: LastGit CRs on lastdb:///schema-infra.
-# Automatic AWS deploy: forge-host LastGit deploy-pipeline (not GitHub Actions push).
-# GitHub is a public read-only mirror; do not open or merge PRs there.
+# PR/CR venue of record for EdgeVector/schema-infra.
+# Only the FIRST line is the venue; everything below is a comment.
+#
+# Current: `lastgit` — gate of record is LastGit on the code-node
+# socket (~/.lastgit/code/data/folddb.sock). CI + auto-merge:
+# com.edgevector.lastgit-forge-code (lastgit forge run --all).
+# Deploy: com.edgevector.lastgit-deploy-schema-infra.
+# Mirror: com.edgevector.lastgit-mirror-schema-infra → GitHub public.
+#
+# GitHub is a read-only public mirror (Actions inert). Do not open
+# GitHub PRs for merge; use `lastgit cr` against lastdb:///schema-infra.
