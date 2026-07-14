@@ -1,0 +1,4 @@
+# LastGit node for this repo (code forge — NEVER the primary brain socket).
+# export LASTGIT_SOCKET=$HOME/.lastgit/code/data/folddb.sock
+# git config lastgit.socket $HOME/.lastgit/code/data/folddb.sock
+$HOME/.lastgit/code/data/folddb.sock
