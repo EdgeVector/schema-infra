@@ -1,92 +1,13 @@
-name: CI
+name: ci.yml (mirror-inert)
 
-# PR-time validation for the CDK app. Compiles the TypeScript and runs
-# `cdk synth` against an environment-agnostic dummy account/region — this
-# catches stack construction errors and template-synthesis bugs without
-# needing real AWS credentials.
-#
-# Does NOT include cargo tests for the schema_service Rust submodule —
-# those run in EdgeVector/schema_service's own CI.
+# GitHub is a read-only mirror. LastGit is SoT; AWS deploy is on the forge host.
+# This workflow does nothing automatically.
 
 on:
-  pull_request:
-  merge_group:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
-  cdk:
-    name: CDK synth + typecheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: cdk
-    steps:
-      # Init the schema_service submodule so the worker Dockerfile path
-      # used by `DockerImageCode.fromImageAsset(...)` exists at synth
-      # time. The Docker image is only built at deploy time, but synth
-      # validates the source path exists. The default GITHUB_TOKEN
-      # cannot clone private org repos, so use GH_PAT (org-level token).
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
-        with:
-          submodules: true
-          token: ${{ secrets.GH_PAT }}
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: cdk/package-lock.json
-
-      - name: Install deps
-        run: npm ci
-
-      - name: TypeScript compile
-        run: npx tsc --noEmit
-
-      # `cdk synth` validates that every `Code.fromAsset(path)` resolves to
-      # an existing directory. Two of those paths are produced by `build.sh`
-      # at deploy time (Docker AL2023 build + Hugging Face download), which
-      # CI doesn't run. Drop placeholder directories so synth can construct
-      # the stack — synth doesn't read their contents.
-      - name: Pre-create asset placeholders for synth
-        working-directory: ${{ github.workspace }}
-        run: |
-          mkdir -p target/fastembed_layer
-          touch target/fastembed_layer/.synth-placeholder
-          mkdir -p fold/target/lambda/server_lambda-extracted
-          touch fold/target/lambda/server_lambda-extracted/.synth-placeholder
-
-      - name: CDK synth (dev environment)
-        env:
-          # Dummy values — synth doesn't contact AWS, but cdk requires
-          # account/region context to construct stacks deterministically.
-          CDK_DEFAULT_ACCOUNT: '000000000000'
-          CDK_DEFAULT_REGION: 'us-west-2'
-        run: npx cdk synth --quiet --context environment=dev
-
-  # Org-wide convention: every EdgeVector repo exposes a check named
-  # `ci-required` so the org ruleset can require a single uniform check
-  # across all repos.
-  ci-required:
-    name: ci-required
-    needs: [cdk]
-    if: always()
+  inert:
     runs-on: ubuntu-latest
     steps:
-      - name: All required jobs must succeed
-        env:
-          RESULTS: ${{ join(needs.*.result, ',') }}
-        run: |
-          echo "Required job results: $RESULTS"
-          for r in ${RESULTS//,/ }; do
-            if [ "$r" != "success" ]; then
-              echo "::error::A required job did not succeed (result: $r)"
-              exit 1
-            fi
-          done
-          echo "All required jobs passed."
+      - run: echo "GitHub mirror — no Actions. Use LastGit + forge-host deploy-pipeline."

@@ -1,8 +1,13 @@
-name: Auto-deploy on fold change
+name: auto-deploy-on-fold.yml (mirror-inert)
+
+# GitHub is a read-only mirror. LastGit is SoT; AWS deploy is on the forge host.
+# This workflow does nothing automatically.
+
 on:
   workflow_dispatch:
+
 jobs:
-  noop:
+  inert:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "paused — LastGit deploy-pipeline active"
+      - run: echo "GitHub mirror — no Actions. Use LastGit + forge-host deploy-pipeline."
