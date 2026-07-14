@@ -111,6 +111,7 @@ A few representative routes:
 | GET    | `/v1/schema/{name}`          | Get a specific schema                    |
 | POST   | `/v1/schemas`                | Register / propose a schema              |
 | POST   | `/v1/schemas/batch-check-reuse` | Batch reuse-check for proposed schemas |
+| GET    | `/v1/snapshot/shared-only`   | Export shared-only snapshot for resolver packs |
 | GET    | `/v1/views`                  | List view names                          |
 | GET    | `/v1/transforms`             | List transform records                   |
 
