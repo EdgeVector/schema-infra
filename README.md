@@ -2,6 +2,15 @@
 
 Standalone infrastructure for the FoldDB Schema Service (`schema.folddb.com`).
 
+## Repository Venue
+
+`schema-infra` is canonical in LastGit at `lastdb:///schema-infra`.
+Change requests, CI, merges, and deploy gating happen through LastGit. GitHub
+`EdgeVector/schema-infra` is a public read-only mirror for browse and clone only;
+GitHub Actions are inert and disabled at the repository level.
+
+Mirror details and launchd setup live in [`.lastgit/README.md`](.lastgit/README.md).
+
 ## Overview
 
 This project contains everything needed to deploy the global schema registry for FoldDB:
