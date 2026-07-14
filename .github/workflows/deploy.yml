@@ -1,9 +1,7 @@
 name: Deploy Pipeline
 
 on:
-  push:
-    branches:
-      - main
+  # Automatic deploy is LastGit deploy-pipeline on the forge host.
   workflow_dispatch:
 
 # Serialize deploys so two main pushes (e.g. an auto-bump landing while a
