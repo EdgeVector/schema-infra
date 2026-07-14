@@ -1,0 +1,3 @@
+lastgit
+# Gate of record for EdgeVector/schema-infra: LastGit CRs on lastdb:///schema-infra.
+# Automatic AWS deploy: forge-host LastGit deploy-pipeline (not GitHub Actions push).
