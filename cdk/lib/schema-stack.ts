@@ -14,7 +14,6 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Environment } from "./environment";
@@ -53,19 +52,10 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // S3 Bucket for Schema Service state
     //
-    // The schema service persists its state in four JSON domain blobs
-    // plus a wasm/ prefix, all inside this bucket:
-    //
-    //   schemas.json            - all registered schemas
-    //   canonical_fields.json   - global canonical field registry
-    //   views.json              - registered views
-    //   transforms.json         - transform metadata (NMI matrix, etc.)
-    //   wasm/{hash}.wasm        - content-addressed WASM bytes
-    //
-    // Writes use If-Match ETag read-modify-write for the domain blobs
-    // and If-None-Match for content-addressed WASM. See the design at
-    // fold_db_node/docs/designs/schema_service_s3.md for the full
-    // architecture, including scale ceiling and migration triggers.
+    // Domain blobs (schemas, canonical fields, apps, near-misses, etc.)
+    // live in this bucket. Writes use If-Match ETag RMW for JSON blobs.
+    // Transform/view/WASM plane storage was ripped; do not reintroduce
+    // views.json / transforms.json / wasm/ as product surfaces.
     //
     // Versioning is enabled so we keep rollback history if a bad PUT
     // ever corrupts a blob. S3 versioning costs pennies at this scale.
@@ -78,15 +68,6 @@ export class SchemaServiceStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
       enforceSSL: true,
     });
-
-    // =====================================================
-    // Secrets
-    // =====================================================
-    const anthropicApiKey = secretsmanager.Secret.fromSecretNameV2(
-      this,
-      "AnthropicApiKey",
-      `SchemaServiceAnthropicApiKey-${envName}`,
-    );
 
     // =====================================================
     // Fastembed Model Layer
@@ -235,14 +216,9 @@ exports.handler = async (event) => {
         "../fold/target/lambda/server_lambda-extracted",
       ),
       layers: [fastembedLayer],
-      // First cold start on an empty bucket seeds 12 Phase 1 built-in
-      // schemas. Each schema triggers canonical-field registration
-      // (LLM classify) + RMW persistence to canonical_fields.json and
-      // schemas.json. On a fresh bucket this can take 2–3 minutes
-      // total. Once the blobs are populated, every later cold start
-      // just loads the blobs (< 1s) and the seed returns AlreadyExists
-      // without any S3 writes, so warm invocations complete in
-      // milliseconds.
+      // First cold start on an empty bucket seeds built-in schemas and
+      // RMW-persists domain blobs. Once populated, later cold starts
+      // load blobs (< 1s); warm invocations complete in milliseconds.
       timeout: Duration.seconds(300),
       memorySize: 512,
       environment: {
@@ -250,7 +226,6 @@ exports.handler = async (event) => {
         OBS_SENTRY_DSN: obsSentryDsn,
         OBS_SENTRY_RELEASE: obsSentryRelease,
         OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
-        ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
         // The schema service persists all state in this S3 bucket via
         // S3BlobPersistence. No filesystem required, no VPC, no EFS.
         // User-submitted schemas and canonical fields persist across
@@ -296,12 +271,7 @@ exports.handler = async (event) => {
       },
     });
 
-    // Grant Lambda access to Anthropic API key secret
-    anthropicApiKey.grantRead(schemaServiceFn);
-
-    // Grant Lambda read/write on the schema bucket. We scope to the
-    // four known domain blob keys plus the wasm/ prefix so an errant
-    // Lambda bug can't touch unrelated keys in the bucket.
+    // Grant Lambda read/write on the schema bucket (domain blobs).
     schemaBucket.grantReadWrite(schemaServiceFn);
 
     // Every route below points at the same `schemaServiceFn`, so this
@@ -349,107 +319,49 @@ exports.handler = async (event) => {
     });
 
     // =====================================================
-    // Route definitions
+    // Route definitions — /v1 only.
     //
-    // Every public path is registered under BOTH /api/* and /v1/*.
-    // Phase 0 of the schema_service extraction introduced /v1/* as the
-    // canonical prefix; /api/* stays in place for the transition and is
-    // dropped in Phase 1 when this Lambda is absorbed into the
-    // schema_service repo. The Lambda handler (main.rs) matches either
-    // prefix to the same dispatch arm, so only the API Gateway routing
-    // needs to be duplicated here.
+    // The Lambda dispatch is /v1-only (explicitly rejects /api/*).
+    // Transform / view / WASM / triggers gateway routes were product-
+    // ripped; do not re-mount them. Keep only live schema/apps/snapshot
+    // surfaces that server_lambda still handles.
     // =====================================================
-    const schemaPaths: Array<{
-      api: string;
-      v1: string;
-      methods: apigwv2.HttpMethod[];
-      integrationId: string;
-    }> = [
-      {
-        api: "/api/schemas",
-        v1: "/v1/schemas",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "SchemaListIntegration",
-      },
-      {
-        api: "/api/schemas/available",
-        v1: "/v1/schemas/available",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaAvailableIntegration",
-      },
-      {
-        api: "/api/schemas/similar/{schemaId}",
-        v1: "/v1/schemas/similar/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaSimilarIntegration",
-      },
-      {
-        api: "/api/schemas/{schemaId}",
-        v1: "/v1/schemas/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaGetIntegration",
-      },
-      {
-        // Singular /schema/{schemaId} used by FoldDB client
-        api: "/api/schema/{schemaId}",
-        v1: "/v1/schema/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaGetSingularIntegration",
-      },
-      {
-        api: "/api/views",
-        v1: "/v1/views",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "ViewListIntegration",
-      },
-      {
-        api: "/api/views/available",
-        v1: "/v1/views/available",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "ViewAvailableIntegration",
-      },
-      {
-        api: "/api/view/{viewId}",
-        v1: "/v1/view/{viewId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "ViewGetIntegration",
-      },
-    ];
-
-    for (const route of schemaPaths) {
-      httpApi.addRoutes({
-        path: route.api,
-        methods: route.methods,
-        integration: lambdaIntegration(route.integrationId),
-      });
-      httpApi.addRoutes({
-        path: route.v1,
-        methods: route.methods,
-        integration: lambdaIntegration(`${route.integrationId}V1`),
-      });
-    }
-
-    // /v1/health alongside the existing /health route.
-    httpApi.addRoutes({
-      path: "/v1/health",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: lambdaIntegration("SchemaHealthIntegrationV1"),
-    });
-
-    // =====================================================
-    // Routes added for the new server_lambda (Phase 1 PR 4/5).
-    //
-    // These eight endpoints land in the Lambda via Phase 1 PR 2/5 and
-    // close the parity gap with the actix wrapper. They are /v1-only —
-    // the old in-tree Lambda never served them, so there is no /api/*
-    // path to keep alive. `POST /v1/schemas/reload` is also added
-    // because the new handler exposes it (the old one did not).
-    // =====================================================
-    const v1OnlyRoutes: Array<{
+    const v1Routes: Array<{
       path: string;
       methods: apigwv2.HttpMethod[];
       integrationId: string;
     }> = [
+      {
+        path: "/v1/health",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaHealthIntegrationV1",
+      },
+      {
+        path: "/v1/schemas",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "SchemaListIntegrationV1",
+      },
+      {
+        path: "/v1/schemas/available",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaAvailableIntegrationV1",
+      },
+      {
+        path: "/v1/schemas/similar/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaSimilarIntegrationV1",
+      },
+      {
+        path: "/v1/schemas/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaGetIntegrationV1",
+      },
+      {
+        // Singular /schema/{schemaId} used by FoldDB client
+        path: "/v1/schema/{schemaId}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaGetSingularIntegrationV1",
+      },
       {
         path: "/v1/schemas/batch-check-reuse",
         methods: [apigwv2.HttpMethod.POST],
@@ -459,41 +371,6 @@ exports.handler = async (event) => {
         path: "/v1/schemas/reload",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "SchemaReloadIntegrationV1",
-      },
-      {
-        path: "/v1/transforms",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "TransformListIntegrationV1",
-      },
-      {
-        path: "/v1/transforms/available",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "TransformAvailableIntegrationV1",
-      },
-      {
-        path: "/v1/transforms/verify",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "TransformVerifyIntegrationV1",
-      },
-      {
-        path: "/v1/transforms/similar/{name}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "TransformSimilarIntegrationV1",
-      },
-      {
-        path: "/v1/transform/{hash}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "TransformGetIntegrationV1",
-      },
-      {
-        // NB: API Gateway HTTP API path variables are single-segment
-        // by design (no greedy `{hash+}`), so `/v1/transform/{hash}/wasm`
-        // is a separate route — matched before the parent `{hash}` arm
-        // in the Lambda's dispatch, but API Gateway routes both here
-        // regardless of order.
-        path: "/v1/transform/{hash}/wasm",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "TransformWasmIntegrationV1",
       },
       {
         // Admin one-shot: backfill embeddings for every schema and
@@ -509,76 +386,36 @@ exports.handler = async (event) => {
       {
         // Auth-gated registry export. Lambda validates `X-API-Key`
         // against the cross-stack-imported `ApiKeys` DynamoDB table
-        // (see the cross-stack auth wire above) and returns a
-        // `SnapshotEnvelope` on success. Drives the dev-binary
-        // `--hydrate-from https://schema.folddb.com` flow per
-        // `projects/schema-service-dev-hydration`. The dev-only
-        // `POST /v1/snapshot/import` is intentionally NOT mounted —
-        // Lambda storage is S3-backed (External), and the importer is
-        // Sled-only by construction.
+        // and returns a `SnapshotEnvelope` on success.
         path: "/v1/snapshot",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SnapshotExportIntegrationV1",
       },
       {
         // Auth-gated shared-only registry export for resolver packs.
-        // The Lambda dispatch arm already exists in the fold submodule;
-        // mounting the Gateway route keeps prod from 404ing before auth.
         path: "/v1/snapshot/shared-only",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SnapshotSharedOnlyExportIntegrationV1",
       },
-      // =====================================================
-      // App identity v3.1 (Lanes B2b / B2c).
-      //
-      // Mount the app-identity routes on the gateway so the Lambda
-      // dispatch arms (already deployed) become reachable. With the
-      // owner_app_id gate ACTIVE on POST /v1/schemas (it activates
-      // as soon as APP_IDENTITY_ROOT_PUBKEYS is set — see the env
-      // var block above), the app-owned publish flow is the only
-      // way to register a User-source schema. Without POST /v1/apps
-      // on the gateway the gate becomes a hard wall: every publish
-      // 400s with owner_app_id_required and the client has no way
-      // to obtain an app_id. See `fold/schema_service/CLAUDE.md` for
-      // the publish handshake and the dev-cert/mirror runbook.
-      // =====================================================
+      // App identity v3.1 — required for owner_app_id publish gate.
       {
-        // POST /v1/apps — register an app namespace. Lambda enforces
-        // the dev-cert + ECDSA signature gate in
-        // `server_lambda/src/main.rs ("POST", "/v1/apps")`.
         path: "/v1/apps",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "AppRegisterIntegrationV1",
       },
       {
-        // GET /v1/apps/{app_id} — lookup an app record by id. Clients
-        // call this to resolve owner_app_id before publishing.
         path: "/v1/apps/{app_id}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "AppGetIntegrationV1",
       },
       {
-        // POST /v1/apps/{app_id}/promote — flip a sandbox app to live
-        // (fold #517). Owner-authenticated: Lambda enforces the dev-cert
-        // + `app_promote` ECDSA/Ed25519 signature gate and requires
-        // authorized_publisher, in
-        // `server_lambda/src/main.rs` (POST .../promote arm).
         path: "/v1/apps/{app_id}/promote",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "AppPromoteIntegrationV1",
       },
-      {
-        // POST /v1/triggers/simulate — stateless trigger dry-run.
-        // Validates the spec and computes when it would fire under
-        // the given facts. No app-identity coupling, but landed in
-        // the same release wave.
-        path: "/v1/triggers/simulate",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "TriggersSimulateIntegrationV1",
-      },
     ];
 
-    for (const route of v1OnlyRoutes) {
+    for (const route of v1Routes) {
       httpApi.addRoutes({
         path: route.path,
         methods: route.methods,
@@ -588,14 +425,6 @@ exports.handler = async (event) => {
 
     // =====================================================
     // Schema embeddings — DynamoDB table.
-    //
-    // Server-side transform compilation was removed in fold #978
-    // ("transform submission is binary-only — drop server-side
-    // compile"): `POST /v1/transforms` now accepts pre-compiled
-    // `wasm_bytes`, so the async compile worker, its SQS queue/DLQ,
-    // the `transform-jobs` status table, and the
-    // `/v1/transform-jobs/{id}` polling endpoint are all gone. What
-    // remains here is the embeddings store, which is unrelated.
     // =====================================================
 
     // Embeddings table. Single table, two kinds share via partition key:
