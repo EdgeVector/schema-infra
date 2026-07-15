@@ -17,17 +17,6 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-# Forward the resolved environment into the (containerized) build so the
-# transform-wasm gate in lambda-container-build.sh can enforce its prod-asserted-off
-# invariant structurally (not just by trusting the var below).
-export DEPLOY_ENV="$ENVIRONMENT"
-
-# fold removed the transform-wasm shipping track (fold #420 / 925949995).
-# schema_service_server_lambda no longer declares that feature, so enabling
-# ENABLE_TRANSFORM_WASM=1 fails cargo with "does not contain this feature".
-# Always off until a new fold pin reintroduces the feature.
-export ENABLE_TRANSFORM_WASM=0
-
 # Determine region based on environment
 if [ "$ENVIRONMENT" = "prod" ]; then
     REGION="us-east-1"

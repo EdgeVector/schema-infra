@@ -25,28 +25,6 @@ set -euo pipefail
 export CARGO_HOME="${CARGO_HOME:-/build/schema-infra/.docker-cache/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-/build/schema-infra/.docker-cache/rustup}"
 export BUILD_PROFILE="${BUILD_PROFILE:-release}"
-# Measured-NMI transform engine gate (card schema-service-enable-measured-nmi-engine).
-# When "1", the Lambda is built `--features transform-wasm`, which links the
-# live submitted-WASM validator + NMI sampler so transform-output classification
-# is MEASURED instead of falling back to the input ceiling. DEFAULT OFF so the
-# prod build ships WITHOUT the live WASM engine — prod enablement is the separate
-# human gate `gate1-prod-cutover-transform-wasm`. schema-infra's CI sets this to
-# "1" for the DEV build only (build.sh forwards it via docker -e).
-#
-# HARDENING (card schema-infra-wire-transform-wasm-dev-gate): the gate is
-# STRUCTURALLY dev-only with a prod-asserted-off backstop. ENABLE_TRANSFORM_WASM
-# alone is not trusted — the engine is appended ONLY when the resolved deploy
-# environment is `dev`, and if the var is ever truthy for a non-dev (prod, or an
-# unresolved/blank) environment the build HARD-FAILS here. So a careless future
-# change that turns the var on for prod can never silently ship the
-# untrusted-third-party-WASM RCE surface to end users — that prod default-on flip
-# is a separate business+security human gate (decisions-log
-# `wasm-enable-shipping-feature` / `gate1-prod-cutover-transform-wasm`), NOT
-# something this build path can reach. DEPLOY_ENV is forwarded by build.sh (-e)
-# from deploy.sh's resolved $ENVIRONMENT; a missing/blank value is treated as
-# NOT dev (fail safe).
-export ENABLE_TRANSFORM_WASM="${ENABLE_TRANSFORM_WASM:-0}"
-export DEPLOY_ENV="${DEPLOY_ENV:-}"
 
 yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
 
@@ -102,33 +80,12 @@ fi
 # errors "unrecognized subcommand 'build'". `cargo lambda build` works now
 # that the prebuilt binary is reliably on PATH (/usr/local/bin); the rustup
 # cargo resolves it. Verified in an isolated AL2023 container.
-# Build the feature flag list. The measured-NMI engine is opt-in
-# (ENABLE_TRANSFORM_WASM=1, DEV only) so the prod build never links the
-# live WASM execution engine. `cargo lambda build` forwards `--features`
-# down to the underlying `cargo build`.
 #
-# Dev-only gate + prod-asserted-off backstop (see ENABLE_TRANSFORM_WASM /
-# DEPLOY_ENV comment above):
-#   * var != 1                 -> stub everywhere (default, unchanged behavior).
-#   * var == 1 AND env == dev  -> append --features transform-wasm (dev only).
-#   * var == 1 AND env != dev  -> HARD FAIL: prod (or any non-dev/unresolved
-#                                 env) can never build the WASM engine here.
-FEATURE_ARGS=()
-if [ "$ENABLE_TRANSFORM_WASM" = "1" ]; then
-    if [ "$DEPLOY_ENV" = "dev" ]; then
-        echo "ENABLE_TRANSFORM_WASM=1 + DEPLOY_ENV=dev → building with --features transform-wasm (measured-NMI engine ON, DEV only)"
-        FEATURE_ARGS+=(--features transform-wasm)
-    else
-        echo "FATAL: ENABLE_TRANSFORM_WASM=1 but DEPLOY_ENV='${DEPLOY_ENV}' is not 'dev'." >&2
-        echo "       The transform-wasm engine is dev-only and prod-asserted-off — refusing to" >&2
-        echo "       build a non-dev Lambda with the live WASM engine. Shipping untrusted" >&2
-        echo "       third-party transform code to end users is a separate human gate" >&2
-        echo "       (wasm-enable-shipping-feature / gate1-prod-cutover-transform-wasm)." >&2
-        exit 1
-    fi
-else
-    echo "ENABLE_TRANSFORM_WASM=0 → measured-NMI engine OFF (Phase-1 ceiling classification)"
-fi
+# Always enable FastEmbed for live resolve (native_component_cover@1). The
+# model is served from the dedicated Lambda Layer at /opt/fastembed_cache.
+# The transform-wasm feature was removed from fold; do not reintroduce
+# ENABLE_TRANSFORM_WASM here.
+echo "Building with --features fastembed (native_component_cover resolve requires live embeddings)"
 
 cargo lambda build \
     --profile "$BUILD_PROFILE" \
@@ -137,5 +94,5 @@ cargo lambda build \
     --compiler cargo \
     --locked \
     -p schema_service_server_lambda \
-    "${FEATURE_ARGS[@]}"
+    --features fastembed
 chmod -R a+rwX target/lambda/ 2>/dev/null || true
