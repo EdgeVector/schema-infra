@@ -2,6 +2,15 @@
 # LastGit merge gate for schema-infra (not deploy).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Compatibility guard for older LastGit watchers: deploy-pipeline statuses must
+# run the deploy script, never the merge gate. Newer LastGit resolves
+# `.lastgit/<context>.sh` directly; this branch catches stale runners that still
+# invoke `.lastgit/ci.sh` for every context.
+if [ "${LASTGIT_CI_CONTEXT:-ci-required}" = "deploy-pipeline" ]; then
+  exec .lastgit/deploy-pipeline.sh
+fi
+
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
 for f in ./*.sh .lastgit/*.sh scripts/*.sh; do
