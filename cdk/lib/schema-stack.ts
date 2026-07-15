@@ -274,10 +274,19 @@ exports.handler = async (event) => {
     // Grant Lambda read/write on the schema bucket (domain blobs).
     schemaBucket.grantReadWrite(schemaServiceFn);
 
-    // Every route below points at the same `schemaServiceFn`, so this
-    // helper closes over it — call sites just supply the integration id.
+    // `live` alias is the traffic seam for staged canary deploys:
+    // post-deploy scripts pin 10% of prod traffic on a new version for
+    // CANARY_SOAK_HOURS (default 24h), then promote to 100% if alarms stay
+    // green. See scripts/deploy/* and .lastgit/deploy-pipeline.sh.
+    const schemaServiceLive = new lambda.Alias(this, "SchemaServiceLiveAlias", {
+      aliasName: "live",
+      version: schemaServiceFn.currentVersion,
+    });
+
+    // Every route points at the `live` alias (not $LATEST), so canary weights
+    // apply. Call sites just supply the integration id.
     const lambdaIntegration = (id: string) =>
-      new apigwv2Integrations.HttpLambdaIntegration(id, schemaServiceFn);
+      new apigwv2Integrations.HttpLambdaIntegration(id, schemaServiceLive);
 
     // =====================================================
     // HTTP API Gateway with CORS
@@ -565,6 +574,11 @@ exports.handler = async (event) => {
     new CfnOutput(this, "SchemaServiceFunctionName", {
       value: schemaServiceFn.functionName,
       description: "Schema service Lambda function name",
+    });
+
+    new CfnOutput(this, "SchemaServiceLiveAliasName", {
+      value: schemaServiceLive.functionName,
+      description: "Qualified live alias name (function:live) for canary traffic",
     });
   }
 }
