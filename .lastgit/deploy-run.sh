@@ -5,6 +5,11 @@ REPO="${1:-schema-infra}"
 CONTEXT="${LASTGIT_DEPLOY_CONTEXT:-deploy-pipeline}"
 REF="${LASTGIT_DEPLOY_REF:-refs/heads/main}"
 TIMEOUT_MS="${LASTGIT_DEPLOY_TIMEOUT_MS:-10800000}"
+# Production LastGit now lives on the primary Mini socket. Launchd jobs do not
+# always inherit the interactive shell discovery env, so pin it here instead of
+# falling back to the retired TCP/code-node route.
+export LASTGIT_SOCKET="${LASTGIT_SOCKET:-$HOME/.lastdb/data/folddb.sock}"
+export LASTGIT_SCHEMA_MAP="${LASTGIT_SCHEMA_MAP:-$HOME/.lastgit/schema-map.json}"
 # docker + cargo tooling must be on PATH for launchd (minimal default PATH).
 export PATH="${HOME}/.cargo/bin:${HOME}/code/edgevector/lastgit/bin:${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-$REPO}"

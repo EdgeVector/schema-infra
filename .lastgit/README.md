@@ -2,22 +2,28 @@
 
 | Role | Location |
 |------|----------|
-| **SoT / CR / CI / merge** | `lastdb:///schema-infra` on the **code node** |
+| **SoT / CR / CI / merge** | `lastdb:///schema-infra` on the primary Mini |
 | **Public mirror** | `https://github.com/EdgeVector/schema-infra` (browse/clone only) |
 | **Deploy gate** | `com.edgevector.lastgit-deploy-schema-infra` |
 
-## Cutover status (2026-07-14 full)
+## Cutover status (2026-07-15 primary Mini)
 
 - `.last-stack/pr-venue` = **`lastgit`**
-- CI + auto-merge: `com.edgevector.lastgit-forge-code` (concurrency 1, `ci-required`)
+- CI + auto-merge: `com.edgevector.lastgit-forge-primary` (concurrency 1, `ci-required`)
 - Deploy: `com.edgevector.lastgit-deploy-schema-infra`
 - Continuous mirror: `com.edgevector.lastgit-mirror-schema-infra` (install via
   `.lastgit/install-mirror-launchd.sh` from a LastGit main checkout)
+- Socket: `$HOME/.lastdb/data/folddb.sock`
+
+The retired code-node path under `$HOME/.lastgit/code` must not be used for
+daily-driver CR, CI, or deploy status. Deploy launchd jobs pin
+`LASTGIT_SOCKET` in `.lastgit/deploy-run.sh` so `deploy-pipeline` status is
+published to the same primary Mini node as CR merge state.
 
 ## Workflow
 
 ```bash
-export LASTGIT_SOCKET=$HOME/.lastgit/code/data/folddb.sock
+export LASTGIT_SOCKET=$HOME/.lastdb/data/folddb.sock
 export LASTGIT_SCHEMA_MAP=$HOME/.lastgit/schema-map.json
 git config lastgit.socket "$LASTGIT_SOCKET"
 git config laststack.pr-venue lastgit
@@ -42,6 +48,6 @@ From a checkout of LastGit `main`:
 ## Pin
 
 ```bash
-export LASTGIT_SOCKET=$HOME/.lastgit/code/data/folddb.sock
+export LASTGIT_SOCKET=$HOME/.lastdb/data/folddb.sock
 git config lastgit.socket "$LASTGIT_SOCKET"
 ```
