@@ -33,15 +33,22 @@ export class SchemaServiceStack extends Stack {
     );
     const envName = environment.name;
 
-    // Backend Sentry DSN, added to the request-path Lambda and the compile
-    // worker below. Sourced from the OBS_SENTRY_DSN secret at synth time
-    // (deploy.yml / deploy.sh export it). Empty when unset, in which case
-    // `observability::init_lambda` leaves the Sentry sink off and CloudWatch
-    // logging is unchanged. Like the frontend's VITE_SENTRY_DSN it is a
-    // write-only client token, not a confidential secret, so a plaintext env
-    // var is appropriate; init_lambda reads OBS_SENTRY_DSN directly and does
-    // not support a Secrets Manager ARN.
+    // Backend Sentry config, added to the request-path Lambda. The DSN is
+    // sourced from the OBS_SENTRY_DSN secret at synth time (deploy.sh exports
+    // it). Empty when unset, in which case `observability::init_lambda` leaves
+    // the Sentry sink off and CloudWatch logging is unchanged. Like the
+    // frontend's VITE_SENTRY_DSN it is a write-only client token, not a
+    // confidential secret, so a plaintext env var is appropriate.
+    //
+    // OBS_SENTRY_RELEASE tags events with the exact deploy SHA/version, and
+    // OBS_SENTRY_ENVIRONMENT separates dev/prod events in Sentry. The fold
+    // observability crate reads these names directly when it builds
+    // sentry::ClientOptions.
     const obsSentryDsn = process.env.OBS_SENTRY_DSN ?? "";
+    const obsSentryRelease =
+      process.env.OBS_SENTRY_RELEASE ?? process.env.OBS_RELEASE ?? "";
+    const obsSentryEnvironment =
+      process.env.OBS_SENTRY_ENVIRONMENT ?? envName;
 
     // =====================================================
     // S3 Bucket for Schema Service state
@@ -241,6 +248,8 @@ exports.handler = async (event) => {
       environment: {
         RUST_LOG: "info",
         OBS_SENTRY_DSN: obsSentryDsn,
+        OBS_SENTRY_RELEASE: obsSentryRelease,
+        OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
         ANTHROPIC_API_KEY_SECRET_ARN: anthropicApiKey.secretArn,
         // The schema service persists all state in this S3 bucket via
         // S3BlobPersistence. No filesystem required, no VPC, no EFS.
