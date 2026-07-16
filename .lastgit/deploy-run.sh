@@ -11,7 +11,14 @@ TIMEOUT_MS="${LASTGIT_DEPLOY_TIMEOUT_MS:-10800000}"
 export LASTGIT_SOCKET="${LASTGIT_SOCKET:-$HOME/.lastdb/data/folddb.sock}"
 export LASTGIT_SCHEMA_MAP="${LASTGIT_SCHEMA_MAP:-$HOME/.lastgit/schema-map.json}"
 # docker + cargo tooling must be on PATH for launchd (minimal default PATH).
-export PATH="${HOME}/.cargo/bin:${HOME}/code/edgevector/lastgit/bin:${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+# Prefer the installed LastGit CLI so deploy status writes use the same
+# HashRange-compatible client path as the primary forge supervisor.
+LASTGIT_INSTALL_BIN_DIR="${LASTGIT_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+export PATH="${LASTGIT_INSTALL_BIN_DIR}:${HOME}/.cargo/bin:${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+command -v lastgit >/dev/null || {
+  echo "FAIL: installed lastgit missing on PATH; expected ${LASTGIT_INSTALL_BIN_DIR}/lastgit" >&2
+  exit 1
+}
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-$REPO}"
 mkdir -p "$LOG_DIR"
 echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF logs=$LOG_DIR"
