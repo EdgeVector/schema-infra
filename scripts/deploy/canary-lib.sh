@@ -46,12 +46,16 @@ alias_version() {
 }
 
 # After CDK points live → NEW 100%, re-pin: primary=OLD, 10% → NEW.
-# If alias did not exist yet (first deploy), leave 100% on NEW.
+# Returns 0 if weighted pin applied, 1 if skipped (no soak state).
 set_canary_weights() {
   local fn="$1" region="$2" old_ver="$3" new_ver="$4"
-  if [ -z "$old_ver" ] || [ "$old_ver" = "$new_ver" ] || [ "$old_ver" = "\$LATEST" ]; then
+  if [ -z "${new_ver:-}" ] || [ "$new_ver" = "None" ]; then
+    canary_log "canary: no new version — skip pin"
+    return 1
+  fi
+  if [ -z "$old_ver" ] || [ "$old_ver" = "$new_ver" ] || [ "$old_ver" = "\$LATEST" ] || [ "$old_ver" = "None" ]; then
     canary_log "canary: no prior version to weight (old=${old_ver:-none} new=$new_ver) — leaving 100% on new"
-    return 0
+    return 1
   fi
   # Weighted routing is incompatible with provisioned concurrency on the alias.
   if aws lambda get-provisioned-concurrency-config \
@@ -70,7 +74,7 @@ set_canary_weights() {
       old_ver="$fallback"
     else
       canary_log "canary: old=$old_ver missing and no fallback — leave 100% on $new_ver"
-      return 0
+      return 1
     fi
   fi
   canary_log "canary: pin primary=$old_ver canary=$new_ver weight=$CANARY_WEIGHT"
@@ -80,23 +84,26 @@ set_canary_weights() {
     --function-version "$old_ver" \
     --routing-config "AdditionalVersionWeights={${new_ver}=${CANARY_WEIGHT}}" \
     --region "$region" >/dev/null
+  return 0
 }
 
-# Promote canary version to 100% (no routing weights).
+# Promote canary version to 100% (must clear routing weights).
 promote_canary_full() {
   local fn="$1" region="$2" new_ver="$3"
-  canary_log "canary: promote 100% → version $new_ver"
-  aws lambda update-alias \
-    --function-name "$fn" \
-    --name live \
-    --function-version "$new_ver" \
-    --routing-config '{}' \
-    --region "$region" >/dev/null 2>&1 \
-  || aws lambda update-alias \
-    --function-name "$fn" \
-    --name live \
-    --function-version "$new_ver" \
-    --region "$region" >/dev/null
+  [ -n "${new_ver:-}" ] || return 0
+  canary_log "canary: promote 100% → version $new_ver (clear routing weights)"
+  if ! aws lambda update-alias \
+      --function-name "$fn" \
+      --name live \
+      --function-version "$new_ver" \
+      --routing-config "AdditionalVersionWeights={}" \
+      --region "$region" >/dev/null 2>&1; then
+    aws lambda update-alias \
+      --function-name "$fn" \
+      --name live \
+      --function-version "$new_ver" \
+      --region "$region" >/dev/null
+  fi
 }
 
 # Rollback: 100% to old version.

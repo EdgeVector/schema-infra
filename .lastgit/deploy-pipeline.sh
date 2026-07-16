@@ -72,20 +72,23 @@ FN=$(schema_fn_name prod us-east-1)
 NEW_VER=$(alias_version "$FN" us-east-1)
 canary_log "post-prod alias version new=$NEW_VER fn=$FN"
 
-# Re-pin 10% canary if we had a prior version
-set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER"
-
-STARTED=$(canary_ts)
-export CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
-PROMOTE_AFTER=$(python3 - <<PY
+# Re-pin 10% canary if we had a prior version; only write soak state when pin lands.
+if set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER"; then
+  STARTED=$(canary_ts)
+  export CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
+  PROMOTE_AFTER=$(python3 - <<PY
 from datetime import datetime, timedelta, timezone
 import os
 h = float(os.environ.get("CANARY_SOAK_HOURS", "24"))
 print((datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
 )
-write_canary_state "$OID" "${OLD_VER:-}" "$NEW_VER" "$FN" "us-east-1" "$STARTED" "$PROMOTE_AFTER"
-canary_log "canary soak until $PROMOTE_AFTER (CANARY_SOAK_HOURS=${CANARY_SOAK_HOURS})"
-
-echo "lastgit schema deploy-pipeline PASSED (prod canary soaking until $PROMOTE_AFTER)"
-echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"
+  write_canary_state "$OID" "${OLD_VER:-}" "$NEW_VER" "$FN" "us-east-1" "$STARTED" "$PROMOTE_AFTER"
+  canary_log "canary soak until $PROMOTE_AFTER (CANARY_SOAK_HOURS=${CANARY_SOAK_HOURS})"
+  echo "lastgit schema deploy-pipeline PASSED (prod canary soaking until $PROMOTE_AFTER)"
+  echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"
+else
+  clear_canary_state 2>/dev/null || rm -f "${STATE_FILE:-}"
+  canary_log "canary: no weighted pin (old==new or missing) — no soak state"
+  echo "lastgit schema deploy-pipeline PASSED (prod deploy; no canary pin needed)"
+fi
