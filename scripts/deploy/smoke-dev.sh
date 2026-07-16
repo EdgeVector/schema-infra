@@ -67,6 +67,21 @@ case "$code" in
   *) echo "FAIL /v1/snapshot/shared-only HTTP $code"; fail=1 ;;
 esac
 
+# Schema resolve must be mounted. This is a public read/dedupe route used by
+# fresh Mini nodes during first app-schema declaration; APIGW 404 breaks init.
+code=$(curl -sS -m 20 -o /tmp/schema-resolve.out -w "%{http_code}" \
+  -X POST "${API_URL}/v1/schemas/resolve" \
+  -H 'Content-Type: application/json' \
+  -d '{"client_registry_version":null,"proposals":[]}' || echo 000)
+case "$code" in
+  200|400) echo "OK   /v1/schemas/resolve HTTP $code (mounted)" ;;
+  404)
+    echo "FAIL /v1/schemas/resolve HTTP 404 (route missing on gateway)"
+    fail=1
+    ;;
+  *) echo "FAIL /v1/schemas/resolve HTTP $code"; fail=1 ;;
+esac
+
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)

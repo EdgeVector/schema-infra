@@ -377,6 +377,13 @@ exports.handler = async (event) => {
         integrationId: "SchemaBatchCheckReuseIntegrationV1",
       },
       {
+        // Stateless dedupe for Mini cache misses. Fresh LastDB nodes call this
+        // through /api/apps/declare-schema during first fkanban/fbrain init.
+        path: "/v1/schemas/resolve",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaResolveIntegrationV1",
+      },
+      {
         path: "/v1/schemas/reload",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "SchemaReloadIntegrationV1",
