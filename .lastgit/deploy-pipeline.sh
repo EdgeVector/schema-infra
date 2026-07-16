@@ -5,7 +5,8 @@
 #   1. Deploy DEV (us-west-2)
 #   2. Smoke tests on DEV
 #   3. Deploy PROD code + pin ~10% traffic on new version ("one box" canary)
-#   4. Record soak state — canary-ticker promotes to 100% after CANARY_SOAK_HOURS (default 24)
+#   4. Smoke PROD
+#   5. Record soak state — canary-ticker promotes to 100% after CANARY_SOAK_HOURS (default 24)
 #      only if configured alarms stay non-ALARM
 #
 # Env:
@@ -63,6 +64,9 @@ if [ -n "${FN:-}" ] && [ "$FN" != "None" ]; then
 fi
 
 ./deploy.sh prod --yes
+
+echo "== STAGE 4: smoke PROD =="
+bash ./scripts/deploy/smoke-dev.sh prod
 
 FN=$(schema_fn_name prod us-east-1)
 NEW_VER=$(alias_version "$FN" us-east-1)

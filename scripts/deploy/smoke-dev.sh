@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Dev smoke tests for schema-infra after deploy.
+# Smoke tests for schema-infra after deploy.
 # Exit 0 only if critical surfaces respond as expected on the NEW stack.
 set -euo pipefail
 
-REGION="${AWS_REGION:-us-west-2}"
-STACK="SchemaServiceStack-dev"
+ENVIRONMENT="${1:-${SCHEMA_SMOKE_ENV:-dev}}"
+case "$ENVIRONMENT" in
+  prod) DEFAULT_REGION="us-east-1" ;;
+  dev) DEFAULT_REGION="us-west-2" ;;
+  *) echo "FAIL: unknown smoke environment: $ENVIRONMENT" >&2; exit 1 ;;
+esac
+
+REGION="${AWS_REGION:-$DEFAULT_REGION}"
+STACK="SchemaServiceStack-$ENVIRONMENT"
 
 API_URL=$(aws cloudformation describe-stacks \
   --stack-name "$STACK" \
@@ -17,7 +24,7 @@ if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
   exit 1
 fi
 
-echo "== schema smoke-dev against $API_URL =="
+echo "== schema smoke-$ENVIRONMENT against $API_URL =="
 
 fail=0
 check() {
@@ -67,6 +74,39 @@ case "$code" in
   *) echo "FAIL /v1/snapshot/shared-only HTTP $code"; fail=1 ;;
 esac
 
+if [ "$ENVIRONMENT" = "prod" ]; then
+  DOMAIN=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK" \
+    --region "$REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceDomain`].OutputValue' \
+    --output text 2>/dev/null || true)
+  DOMAIN_TARGET=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK" \
+    --region "$REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceDomainTarget`].OutputValue' \
+    --output text 2>/dev/null || true)
+
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ] && \
+     [ -n "$DOMAIN_TARGET" ] && [ "$DOMAIN_TARGET" != "None" ]; then
+    code=$(curl -sS -m 20 \
+      --connect-to "${DOMAIN}:443:${DOMAIN_TARGET}:443" \
+      -o /tmp/schema-shared-only-domain.out \
+      -w "%{http_code}" \
+      "https://${DOMAIN}/v1/snapshot/shared-only" || echo 000)
+    case "$code" in
+      200|401|403) echo "OK   ${DOMAIN}/v1/snapshot/shared-only HTTP $code (mounted)" ;;
+      404)
+        echo "FAIL ${DOMAIN}/v1/snapshot/shared-only HTTP 404 (custom-domain route missing)"
+        fail=1
+        ;;
+      *) echo "FAIL ${DOMAIN}/v1/snapshot/shared-only HTTP $code"; fail=1 ;;
+    esac
+  else
+    echo "FAIL: missing prod custom-domain outputs for $STACK"
+    fail=1
+  fi
+fi
+
 # Schema resolve must be mounted. This is a public read/dedupe route used by
 # fresh Mini nodes during first app-schema declaration; APIGW 404 breaks init.
 code=$(curl -sS -m 20 -o /tmp/schema-resolve.out -w "%{http_code}" \
@@ -97,7 +137,7 @@ if [ -n "$FN" ] && [ "$FN" != "None" ]; then
 fi
 
 if [ "$fail" -ne 0 ]; then
-  echo "schema smoke-dev FAILED"
+  echo "schema smoke-$ENVIRONMENT FAILED"
   exit 1
 fi
-echo "schema smoke-dev PASSED"
+echo "schema smoke-$ENVIRONMENT PASSED"
