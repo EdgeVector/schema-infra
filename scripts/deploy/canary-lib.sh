@@ -61,8 +61,17 @@ set_canary_weights() {
       --function-name "$fn" --qualifier live --region "$region" >/dev/null 2>&1 || true
   fi
   if ! aws lambda get-function --function-name "$fn:$old_ver" --region "$region" >/dev/null 2>&1; then
-    canary_log "canary: old=$old_ver missing — leaving 100% on new=$new_ver"
-    return 0
+    local fallback
+    fallback=$(aws lambda list-versions-by-function --function-name "$fn" --region "$region" \
+      --query 'Versions[?Version!=`$LATEST`].Version' --output text 2>/dev/null \
+      | tr '\t' '\n' | sort -n | grep -v "^${new_ver}$" | tail -1 || true)
+    if [ -n "${fallback:-}" ] && [ "$fallback" != "$new_ver" ]; then
+      canary_log "canary: old=$old_ver missing; using fallback primary=$fallback"
+      old_ver="$fallback"
+    else
+      canary_log "canary: old=$old_ver missing and no fallback — leave 100% on $new_ver"
+      return 0
+    fi
   fi
   canary_log "canary: pin primary=$old_ver canary=$new_ver weight=$CANARY_WEIGHT"
   aws lambda update-alias \
