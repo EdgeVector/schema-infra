@@ -4,7 +4,10 @@ set -euo pipefail
 REPO="${1:-schema-infra}"
 CONTEXT="${LASTGIT_DEPLOY_CONTEXT:-deploy-pipeline}"
 REF="${LASTGIT_DEPLOY_REF:-refs/heads/main}"
-TIMEOUT_MS="${LASTGIT_DEPLOY_TIMEOUT_MS:-10800000}"
+# The staged deploy performs a dev build/deploy, smoke test, prod build/deploy,
+# prod smoke, and canary pin. Cold Docker/Rust/CDK runs can exceed three hours.
+DEFAULT_TIMEOUT_MS=21600000
+TIMEOUT_MS="${LASTGIT_DEPLOY_TIMEOUT_MS:-$DEFAULT_TIMEOUT_MS}"
 # Production LastGit now lives on the primary Mini socket. Launchd jobs do not
 # always inherit the interactive shell discovery env, so pin it here instead of
 # falling back to the retired TCP/code-node route.
@@ -21,7 +24,7 @@ command -v lastgit >/dev/null || {
 }
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-$REPO}"
 mkdir -p "$LOG_DIR"
-echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF logs=$LOG_DIR"
+echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF timeout_ms=$TIMEOUT_MS logs=$LOG_DIR"
 WATCH_PID=""
 stop() { [ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null || true; }
 trap 'stop; exit 0' INT TERM
