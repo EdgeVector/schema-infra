@@ -4,18 +4,27 @@ set -euo pipefail
 
 REPO_SLUG="schema-infra"
 LABEL="com.edgevector.lastgit-deploy-${REPO_SLUG}"
-PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-${REPO_SLUG}}"
 RUNNER="${LOG_DIR}/deploy-run.sh"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="${ROOT}/.lastgit/deploy-run.sh"
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+DEFAULT_PLIST="${LAUNCH_AGENTS_DIR}/${LABEL}.plist"
+PLIST="${LASTGIT_DEPLOY_PLIST:-$DEFAULT_PLIST}"
 
 [ -x "$SOURCE" ] || {
   echo "FAIL: deploy runner is not executable: $SOURCE" >&2
   exit 1
 }
 
-mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+mkdir -p "$LOG_DIR"
+mkdir -p "$LAUNCH_AGENTS_DIR" 2>/dev/null || true
+
+if [ -z "${LASTGIT_DEPLOY_PLIST:-}" ] && { [ ! -d "$LAUNCH_AGENTS_DIR" ] || [ ! -w "$LAUNCH_AGENTS_DIR" ]; }; then
+  PLIST="${LOG_DIR}/${LABEL}.plist"
+fi
+mkdir -p "$(dirname "$PLIST")"
+
 cp -f "$SOURCE" "$RUNNER"
 chmod +x "$RUNNER"
 
