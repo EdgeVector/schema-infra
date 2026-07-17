@@ -18,6 +18,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as cr from "aws-cdk-lib/custom-resources";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Environment } from "./environment";
 
 export interface SchemaServiceStackProps extends StackProps {
@@ -490,6 +491,60 @@ exports.handler = async (event) => {
     );
 
     // =====================================================
+    // Schema mutation gate quota state.
+    // =====================================================
+
+    // Challenge verification is stateless HMAC, so Lambda only needs
+    // shared quota counters. The server_lambda DynamoDB adapter expects:
+    //   PK bucket_key (S): "<window_secs>:<bucket_label>"
+    //   SK window_start (N): unix window start
+    //   TTL expires_at (N): unix expiry for DynamoDB TTL cleanup
+    const mutationGateQuotaTable = new dynamodb.Table(
+      this,
+      "SchemaMutationGateQuotaTable",
+      {
+        tableName: `schema-mutation-gate-quotas-${envName}`,
+        partitionKey: {
+          name: "bucket_key",
+          type: dynamodb.AttributeType.STRING,
+        },
+        sortKey: {
+          name: "window_start",
+          type: dynamodb.AttributeType.NUMBER,
+        },
+        timeToLiveAttribute: "expires_at",
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        removalPolicy: environment.isProd
+          ? RemovalPolicy.RETAIN
+          : RemovalPolicy.DESTROY,
+      },
+    );
+    mutationGateQuotaTable.grantReadWriteData(schemaServiceFn);
+    schemaServiceFn.addEnvironment(
+      "SCHEMA_MUTATION_GATE_QUOTA_TABLE",
+      mutationGateQuotaTable.tableName,
+    );
+
+    const mutationGateHmacSecret = new secretsmanager.Secret(
+      this,
+      "SchemaMutationGateHmacSecret",
+      {
+        description: `HMAC secret for schema mutation PoW challenges (${envName})`,
+        generateSecretString: {
+          passwordLength: 48,
+          excludePunctuation: true,
+        },
+      },
+    );
+    schemaServiceFn.addEnvironment(
+      "SCHEMA_MUTATION_GATE_HMAC_SECRET",
+      mutationGateHmacSecret.secretValue.unsafeUnwrap(),
+    );
+    if (environment.isDev) {
+      schemaServiceFn.addEnvironment("SCHEMA_MUTATION_GATE_ENFORCE", "true");
+    }
+
+    // =====================================================
     // Cross-stack auth wire — `GET /v1/snapshot` validates
     // `X-API-Key` against the exemem `ApiKeys` DynamoDB table.
     //
@@ -797,6 +852,16 @@ exports.handler = async (event) => {
     new CfnOutput(this, "MutationGateHourlyQuotaAlarmName", {
       value: hourlyQuotaAlarm.alarmName,
       description: "Alarm for sustained schema mutation gate hourly quota rejections",
+    });
+
+    new CfnOutput(this, "MutationGateQuotaTableName", {
+      value: mutationGateQuotaTable.tableName,
+      description: "DynamoDB table for schema mutation gate shared quota counters",
+    });
+
+    new CfnOutput(this, "MutationGateHmacSecretName", {
+      value: mutationGateHmacSecret.secretName,
+      description: "Secrets Manager secret backing schema mutation challenge HMAC",
     });
   }
 }
