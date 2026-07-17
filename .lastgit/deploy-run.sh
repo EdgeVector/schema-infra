@@ -24,7 +24,9 @@ command -v lastgit >/dev/null || {
 }
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-$REPO}"
 mkdir -p "$LOG_DIR"
-echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF timeout_ms=$TIMEOUT_MS logs=$LOG_DIR"
+RUNNER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNNER_HEAD="$(git -C "$RUNNER_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF timeout_ms=$TIMEOUT_MS logs=$LOG_DIR runner_root=$RUNNER_ROOT runner_head=$RUNNER_HEAD"
 WATCH_PID=""
 stop() { [ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null || true; }
 trap 'stop; exit 0' INT TERM

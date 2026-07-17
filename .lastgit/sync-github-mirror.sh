@@ -3,9 +3,9 @@
 # Usage: .lastgit/sync-github-mirror.sh [--once]
 set -euo pipefail
 
-export LASTGIT_SOCKET="${LASTGIT_SOCKET:-$HOME/.lastgit/code/data/folddb.sock}"
+export LASTGIT_SOCKET="${LASTGIT_SOCKET:-$HOME/.lastdb/data/folddb.sock}"
 export LASTGIT_SCHEMA_MAP="${LASTGIT_SCHEMA_MAP:-$HOME/.lastgit/schema-map.json}"
-export PATH="$HOME/code/edgevector/lastgit/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export LASTGIT_MIRROR_CLONE="${LASTGIT_MIRROR_CLONE:-$HOME/.lastgit/mirror-clones/schema-infra}"
 export LASTGIT_MIRROR_REMOTE_URL="${LASTGIT_MIRROR_REMOTE_URL:-https://github.com/EdgeVector/schema-infra.git}"
 export LASTGIT_MIRROR_SOURCE_URL="${LASTGIT_MIRROR_SOURCE_URL:-lastdb:///schema-infra}"
@@ -25,4 +25,5 @@ if [ ! -d "$LASTGIT_MIRROR_CLONE/.git" ]; then
 fi
 
 MODE="${1:-}"
-exec "$HOME/code/edgevector/lastgit/.lastgit/sync-github-mirror.sh" schema-infra $MODE
+MIRROR_DRIVER="${LASTGIT_MIRROR_DRIVER:-$HOME/code/edgevector/lastgit/.lastgit/sync-github-mirror.sh}"
+exec "$MIRROR_DRIVER" schema-infra $MODE

@@ -24,6 +24,11 @@ daily-driver CR, CI, or deploy status. Deploy launchd jobs pin
 `LASTGIT_SOCKET` in `.lastgit/deploy-run.sh` so `deploy-pipeline` status is
 published to the same primary Mini node as CR merge state.
 
+Deploy launchd must point at a durable checkout, normally
+`$HOME/.lastgit/mirror-clones/schema-infra`, not a one-shot ship checkout. Run
+`.lastgit/install-deploy-launchd.sh install` after deploy runner changes so the
+LaunchAgent cannot keep supervising a deleted or stale checkout.
+
 ## Workflow
 
 ```bash
@@ -47,6 +52,15 @@ From a checkout of LastGit `main`:
 ```bash
 .lastgit/install-mirror-launchd.sh
 .lastgit/sync-github-mirror.sh --once
+```
+
+## Install deploy watcher
+
+From a checkout of LastGit `main`:
+
+```bash
+.lastgit/install-deploy-launchd.sh install
+.lastgit/install-deploy-launchd.sh status
 ```
 
 ## Pin
