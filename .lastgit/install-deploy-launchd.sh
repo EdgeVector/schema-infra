@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Install the durable LastGit deploy-pipeline supervisor for schema-infra.
+set -euo pipefail
+
+REPO_SLUG="schema-infra"
+LABEL="com.edgevector.lastgit-deploy-${REPO_SLUG}"
+PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-${REPO_SLUG}}"
+RUNNER="${LOG_DIR}/deploy-run.sh"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SOURCE="${ROOT}/.lastgit/deploy-run.sh"
+
+[ -x "$SOURCE" ] || {
+  echo "FAIL: deploy runner is not executable: $SOURCE" >&2
+  exit 1
+}
+
+mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+cp -f "$SOURCE" "$RUNNER"
+chmod +x "$RUNNER"
+
+cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${RUNNER}</string>
+    <string>${REPO_SLUG}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>${HOME}</string>
+    <key>PATH</key><string>${HOME}/.local/bin:${HOME}/.cargo/bin:${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LASTGIT_SOCKET</key><string>${HOME}/.lastdb/data/folddb.sock</string>
+    <key>LASTGIT_SCHEMA_MAP</key><string>${HOME}/.lastgit/schema-map.json</string>
+    <key>LASTGIT_DEPLOY_CONTEXT</key><string>deploy-pipeline</string>
+    <key>LASTGIT_DEPLOY_LOG_DIR</key><string>${LOG_DIR}</string>
+    <key>AWS_PROFILE</key><string>default</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>${LOG_DIR}/launchd.log</string>
+  <key>StandardErrorPath</key><string>${LOG_DIR}/launchd.log</string>
+</dict>
+</plist>
+EOF
+
+launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl enable "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+launchctl kickstart -k "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+
+echo "installed ${LABEL} -> ${RUNNER}"
+echo "  plist=${PLIST}"
+echo "  log_dir=${LOG_DIR}"
