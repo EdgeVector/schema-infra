@@ -294,7 +294,7 @@ exports.handler = async (event) => {
     const httpApi = new apigwv2.HttpApi(this, "SchemaHttpApi", {
       apiName: `schema-service-${envName}`,
       corsPreflight: {
-        allowOrigins: ["*"],
+        allowOrigins: environment.schemaHttpApiCorsAllowOrigins,
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
