@@ -11,6 +11,8 @@ SOURCE="${ROOT}/.lastgit/deploy-run.sh"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 DEFAULT_PLIST="${LAUNCH_AGENTS_DIR}/${LABEL}.plist"
 PLIST="${LASTGIT_DEPLOY_PLIST:-$DEFAULT_PLIST}"
+DOMAIN="gui/$(id -u)"
+CMD="${1:-install}"
 
 [ -x "$SOURCE" ] || {
   echo "FAIL: deploy runner is not executable: $SOURCE" >&2
@@ -25,10 +27,12 @@ if [ -z "${LASTGIT_DEPLOY_PLIST:-}" ] && { [ ! -d "$LAUNCH_AGENTS_DIR" ] || [ ! 
 fi
 mkdir -p "$(dirname "$PLIST")"
 
-cp -f "$SOURCE" "$RUNNER"
-chmod +x "$RUNNER"
+case "$CMD" in
+  install)
+    cp -f "$SOURCE" "$RUNNER"
+    chmod +x "$RUNNER"
 
-cat > "$PLIST" <<EOF
+    cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -47,7 +51,7 @@ cat > "$PLIST" <<EOF
     <key>LASTGIT_SCHEMA_MAP</key><string>${HOME}/.lastgit/schema-map.json</string>
     <key>LASTGIT_DEPLOY_CONTEXT</key><string>deploy-pipeline</string>
     <key>LASTGIT_DEPLOY_LOG_DIR</key><string>${LOG_DIR}</string>
-    <key>AWS_PROFILE</key><string>default</string>
+    <key>AWS_PROFILE</key><string>${AWS_PROFILE:-default}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -58,11 +62,34 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl enable "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl kickstart -k "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+    launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$PLIST"
+    launchctl enable "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    launchctl kickstart -k "${DOMAIN}/${LABEL}" 2>/dev/null || true
 
-echo "installed ${LABEL} -> ${RUNNER}"
-echo "  plist=${PLIST}"
-echo "  log_dir=${LOG_DIR}"
+    echo "installed ${LABEL} -> ${RUNNER}"
+    echo "  plist=${PLIST}"
+    echo "  log_dir=${LOG_DIR}"
+    ;;
+  uninstall)
+    launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    rm -f "$PLIST"
+    echo "unloaded ${LABEL}"
+    ;;
+  status)
+    echo "expected deploy runner: ${RUNNER}"
+    echo "expected lastgit socket: ${HOME}/.lastdb/data/folddb.sock"
+    if [ -f "$PLIST" ]; then
+      echo "installed plist:"
+      plutil -p "$PLIST" 2>/dev/null | sed -n '1,100p' || true
+    fi
+    echo "launchd state:"
+    launchctl print "${DOMAIN}/${LABEL}" 2>/dev/null | sed -n '1,80p' || echo "not loaded"
+    echo "recent deploy log:"
+    tail -20 "$LOG_DIR/deploy.log" 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: $0 install|uninstall|status" >&2
+    exit 2
+    ;;
+esac

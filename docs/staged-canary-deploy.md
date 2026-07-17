@@ -29,8 +29,9 @@ Lambda is multi-tenant. **10% weighted alias traffic** is the serverless stand-i
 ## Ops
 
 ```bash
-# Re-enable merge-triggered deploy (if launchd unloaded)
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.edgevector.lastgit-deploy-schema-infra.plist
+# Install or repair merge-triggered deploy watcher.
+.lastgit/install-deploy-launchd.sh install
+.lastgit/install-deploy-launchd.sh status
 
 # Install canary ticker
 .lastgit/install-canary-ticker-launchd.sh
