@@ -11,6 +11,10 @@
 - `.last-stack/pr-venue` = **`lastgit`**
 - CI + auto-merge: `com.edgevector.lastgit-forge-primary` (concurrency 1, `ci-required`)
 - Deploy: `com.edgevector.lastgit-deploy-schema-infra`
+- Reinstall deploy supervisor from a LastGit main checkout with
+  `.lastgit/install-deploy-launchd.sh`; it copies `.lastgit/deploy-run.sh` into
+  `$HOME/.lastgit/deploy-schema-infra/deploy-run.sh` and points launchd at that
+  durable copy.
 - Continuous mirror: `com.edgevector.lastgit-mirror-schema-infra` (install via
   `.lastgit/install-mirror-launchd.sh` from a LastGit main checkout)
 - Socket: `$HOME/.lastdb/data/folddb.sock`
