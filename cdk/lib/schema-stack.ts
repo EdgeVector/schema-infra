@@ -13,8 +13,10 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as logs from "aws-cdk-lib/aws-logs";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Environment } from "./environment";
 
@@ -525,6 +527,200 @@ exports.handler = async (event) => {
     schemaServiceFn.addEnvironment("API_KEYS_TABLE", apiKeysTableName);
 
     // =====================================================
+    // Schema mutation gate observability.
+    //
+    // The schema service emits Rust tracing log fields with:
+    //   metric="schema_mutation_gate_challenge_total"
+    //   metric="schema_mutation_gate_enforce_total"
+    // plus status/window/bucket and difficulty bits. Metric filters
+    // intentionally count stable text terms; Logs Insights widgets parse
+    // numeric bit fields for operator tuning views.
+    // =====================================================
+    const mutationGateNamespace = "SchemaService/MutationGate";
+    const mutationGateLogGroup = schemaServiceFn.logGroup;
+    const mutationGateMetric = (
+      metricName: string,
+      label: string,
+      period = Duration.minutes(5),
+      statistic = "sum",
+    ) =>
+      new cloudwatch.Metric({
+        namespace: mutationGateNamespace,
+        metricName,
+        statistic,
+        period,
+        label,
+      });
+    const addMutationGateCountFilter = (
+      id: string,
+      metricName: string,
+      terms: string[],
+    ) =>
+      new logs.MetricFilter(this, id, {
+        logGroup: mutationGateLogGroup,
+        filterName: `${envName}-${metricName}`,
+        filterPattern: logs.FilterPattern.allTerms(...terms),
+        metricNamespace: mutationGateNamespace,
+        metricName,
+        metricValue: "1",
+        unit: cloudwatch.Unit.COUNT,
+      });
+
+    addMutationGateCountFilter(
+      "MutationGateChallengeIssuedFilter",
+      "ChallengeIssued",
+      ["schema_mutation_gate_challenge_total", "status", "issued"],
+    );
+    addMutationGateCountFilter("MutationGateAcceptedNovelFilter", "AcceptedNovel", [
+      "schema_mutation_gate_enforce_total",
+      "status",
+      "ok",
+    ]);
+
+    const rejectStatuses = [
+      "invalid_challenge_request",
+      "node_key_required",
+      "node_key_invalid",
+      "node_signature_required",
+      "node_signature_invalid",
+      "proof_of_work_required",
+      "proof_of_work_invalid",
+      "proof_of_work_expired",
+      "quota_exceeded",
+      "internal",
+    ];
+    for (const status of rejectStatuses) {
+      addMutationGateCountFilter(
+        `MutationGateReject${toPascalCase(status)}Filter`,
+        `Reject${toPascalCase(status)}`,
+        ["schema_mutation_gate_enforce_total", "status", status],
+      );
+    }
+
+    const quotaBuckets = ["node", "ip24", "app", "dev_key"];
+    const quotaWindows = ["minute", "hour", "day"];
+    for (const bucket of quotaBuckets) {
+      for (const window of quotaWindows) {
+        addMutationGateCountFilter(
+          `MutationGateQuota${toPascalCase(bucket)}${toPascalCase(window)}Filter`,
+          `QuotaExceeded${toPascalCase(bucket)}${toPascalCase(window)}`,
+          [
+            "schema_mutation_gate_enforce_total",
+            "quota_exceeded",
+            `bucket="${bucket}"`,
+            `window="${window}"`,
+          ],
+        );
+      }
+    }
+
+    const quotaHourMetrics = quotaBuckets.map((bucket, index) =>
+      mutationGateMetric(
+        `QuotaExceeded${toPascalCase(bucket)}Hour`,
+        `${bucket} hour`,
+        Duration.hours(1),
+        "sum",
+      ).with({ id: `h${index + 1}` }),
+    );
+    const hourlyQuotaExceeded = new cloudwatch.MathExpression({
+      expression: quotaHourMetrics.map((_, index) => `h${index + 1}`).join(" + "),
+      usingMetrics: Object.fromEntries(
+        quotaHourMetrics.map((metric, index) => [`h${index + 1}`, metric]),
+      ),
+      period: Duration.hours(1),
+      label: "hourly cap rejects",
+    });
+    const hourlyQuotaAlarm = new cloudwatch.Alarm(
+      this,
+      "MutationGateHourlyQuotaAlarm",
+      {
+        alarmName: `schema-mutation-gate-hourly-quota-${envName}`,
+        alarmDescription:
+          "Schema mutation gate saw sustained hourly quota rejections; inspect caller shape before retuning SCHEMA_MUTATION_GATE_NOVEL_HOUR_QUOTA.",
+        metric: hourlyQuotaExceeded,
+        threshold: 5,
+        evaluationPeriods: 3,
+        datapointsToAlarm: 3,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      },
+    );
+
+    const mutationGateDashboard = new cloudwatch.Dashboard(
+      this,
+      "MutationGateDashboard",
+      {
+        dashboardName: `schema-mutation-gate-${envName}`,
+        defaultInterval: Duration.hours(24),
+      },
+    );
+    mutationGateDashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: "Cap hits by hourly bucket",
+        width: 12,
+        left: quotaHourMetrics,
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Rejects by status",
+        width: 12,
+        left: rejectStatuses.map((status) =>
+          mutationGateMetric(
+            `Reject${toPascalCase(status)}`,
+            status,
+            Duration.minutes(5),
+            "sum",
+          ),
+        ),
+      }),
+    );
+    mutationGateDashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: "Challenge issuance and accepted novel creates",
+        width: 12,
+        left: [
+          mutationGateMetric("ChallengeIssued", "challenges issued"),
+          mutationGateMetric("AcceptedNovel", "accepted novel creates"),
+        ],
+      }),
+      new cloudwatch.AlarmWidget({
+        title: "Sustained hourly-cap alarm",
+        width: 12,
+        alarm: hourlyQuotaAlarm,
+      }),
+    );
+    mutationGateDashboard.addWidgets(
+      new cloudwatch.LogQueryWidget({
+        title: "Issued difficulty bits",
+        width: 12,
+        logGroupNames: [mutationGateLogGroup.logGroupName],
+        view: cloudwatch.LogQueryVisualizationType.LINE,
+        queryLines: [
+          "fields @timestamp, @message",
+          "filter @message like /schema_mutation_gate_challenge_total/",
+          "parse @message /difficulty_bits=(?<difficulty_bits>\\d+)/",
+          "parse @message /base_bits=(?<base_bits>\\d+)/",
+          "parse @message /adaptive_bits=(?<adaptive_bits>\\d+)/",
+          "parse @message /catalog_bits=(?<catalog_bits>\\d+)/",
+          "stats avg(difficulty_bits) as avg_difficulty, max(difficulty_bits) as max_difficulty, avg(base_bits) as base, avg(adaptive_bits) as adaptive, avg(catalog_bits) as catalog by bin(5m)",
+        ],
+      }),
+      new cloudwatch.LogQueryWidget({
+        title: "Quota rejects by window and bucket",
+        width: 12,
+        logGroupNames: [mutationGateLogGroup.logGroupName],
+        view: cloudwatch.LogQueryVisualizationType.LINE,
+        queryLines: [
+          "fields @timestamp, @message",
+          "filter @message like /schema_mutation_gate_enforce_total/ and @message like /quota_exceeded/",
+          "parse @message /bucket=\"(?<bucket>[^\"]+)\"/",
+          "parse @message /window=\"(?<window>[^\"]+)\"/",
+          "stats count(*) as rejects by bin(5m), window, bucket",
+        ],
+      }),
+    );
+
+    // =====================================================
     // Custom Domain (schema.folddb.com) — prod only
     // =====================================================
     // WARNING: Do NOT rename the construct IDs below ("SchemaDomainCert",
@@ -587,5 +783,28 @@ exports.handler = async (event) => {
       value: schemaServiceLive.functionName,
       description: "Qualified live alias name (function:live) for canary traffic",
     });
+
+    new CfnOutput(this, "MutationGateDashboardName", {
+      value: mutationGateDashboard.dashboardName,
+      description: "CloudWatch dashboard for schema mutation gate cap and difficulty tuning",
+    });
+
+    new CfnOutput(this, "MutationGateDashboardUrl", {
+      value: `https://${Stack.of(this).region}.console.aws.amazon.com/cloudwatch/home?region=${Stack.of(this).region}#dashboards:name=${mutationGateDashboard.dashboardName}`,
+      description: "Console URL for the schema mutation gate CloudWatch dashboard",
+    });
+
+    new CfnOutput(this, "MutationGateHourlyQuotaAlarmName", {
+      value: hourlyQuotaAlarm.alarmName,
+      description: "Alarm for sustained schema mutation gate hourly quota rejections",
+    });
   }
+}
+
+function toPascalCase(value: string): string {
+  return value
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
 }
