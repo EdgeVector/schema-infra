@@ -55,11 +55,59 @@ echo "fold submodule at: $(git -C "$FOLD_DIR" rev-parse --short HEAD)"
 CACHE_DIR="$SCRIPT_DIR/.docker-cache"
 mkdir -p "$CACHE_DIR/cargo" "$CACHE_DIR/rustup"
 
+DOCKER_SCRIPT_DIR="$SCRIPT_DIR"
+DOCKER_MIRROR_DIR=""
+needs_docker_mirror() {
+    if [ "${SCHEMA_INFRA_DOCKER_MIRROR:-}" = "1" ]; then
+        return 0
+    fi
+    case "$(uname -s):$SCRIPT_DIR" in
+        Darwin:/private/var/folders/*|Darwin:/var/folders/*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+prepare_docker_mirror() {
+    local hash
+    hash="$(printf '%s' "$SCRIPT_DIR" | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+    DOCKER_MIRROR_DIR="${SCHEMA_INFRA_DOCKER_MIRROR_DIR:-$HOME/.cache/schema-infra/docker-build/$hash}"
+    mkdir -p "$DOCKER_MIRROR_DIR"
+    echo "Docker cannot reliably bind-mount this checkout path; mirroring to $DOCKER_MIRROR_DIR"
+    rsync -a --delete \
+        --exclude '/.git/' \
+        --exclude '/.docker-cache/' \
+        --exclude '/target/' \
+        --exclude '/fold/target/' \
+        --exclude '/cdk/node_modules/' \
+        "$SCRIPT_DIR"/ "$DOCKER_MIRROR_DIR"/
+    mkdir -p "$DOCKER_MIRROR_DIR/.docker-cache/cargo" "$DOCKER_MIRROR_DIR/.docker-cache/rustup"
+    DOCKER_SCRIPT_DIR="$DOCKER_MIRROR_DIR"
+}
+
+copy_mirror_lambda_artifact() {
+    if [ -z "$DOCKER_MIRROR_DIR" ]; then
+        return 0
+    fi
+    local mirror_lambda_dir="$DOCKER_MIRROR_DIR/fold/target/lambda"
+    if [ ! -d "$mirror_lambda_dir" ]; then
+        echo "ERROR: mirrored Docker build did not produce $mirror_lambda_dir" >&2
+        exit 1
+    fi
+    mkdir -p "$FOLD_DIR/target/lambda"
+    rsync -a --delete "$mirror_lambda_dir"/ "$FOLD_DIR/target/lambda"/
+}
+
+if needs_docker_mirror; then
+    prepare_docker_mirror
+fi
+
 echo ""
 echo "=== Building Lambda zip (Docker: amazonlinux:2023) ==="
 docker run --rm \
     --platform linux/amd64 \
-    -v "$SCRIPT_DIR":/build/schema-infra \
+    -v "$DOCKER_SCRIPT_DIR":/build/schema-infra \
     -w /build/schema-infra/fold \
     -e CARGO_HOME=/build/schema-infra/.docker-cache/cargo \
     -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
@@ -67,6 +115,8 @@ docker run --rm \
     -e GH_PAT="${GH_PAT:-}" \
     amazonlinux:2023 \
     bash /build/schema-infra/scripts/lambda-container-build.sh
+
+copy_mirror_lambda_artifact
 
 # =============================================================
 # 3. Extract bootstrap.zip for CDK Code.fromAsset(...)
