@@ -8,7 +8,9 @@
 #      in one cargo workspace, so no sibling-fold_db checkout is needed.
 #   2. Build the Lambda zip from `fold/schema_service/crates/server_lambda/`
 #      (runs cargo-lambda inside Amazon Linux 2023 so ort-sys, which
-#      fastembed pulls in, links against the Lambda runtime glibc).
+#      fastembed pulls in, links against the Lambda runtime glibc). Cargo
+#      intermediates stay in container-local /tmp; only the final lambda zip is
+#      written back to fold/target/lambda for CDK.
 #   3. Extract the zip to `fold/target/lambda/server_lambda-extracted/`
 #      which is the path CDK reads via `Code.fromAsset(...)`.
 #   4. Download the fastembed model files into `target/fastembed_layer/`
@@ -50,7 +52,9 @@ echo "fold submodule at: $(git -C "$FOLD_DIR" rev-parse --short HEAD)"
 #   /build/schema-infra/         ← this repo
 #   /build/schema-infra/fold/    ← submodule (fold monorepo, self-contained;
 #                                  contains both schema_service and fold_db
-#                                  crates as one cargo workspace)
+#                                  crates as one cargo workspace). Cargo
+#                                  intermediates are not written to this bind
+#                                  mount to avoid shared target-dir races.
 # =============================================================
 CACHE_DIR="$SCRIPT_DIR/.docker-cache"
 mkdir -p "$CACHE_DIR/cargo" "$CACHE_DIR/rustup"
