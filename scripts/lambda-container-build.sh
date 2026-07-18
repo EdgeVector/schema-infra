@@ -92,10 +92,12 @@ echo "Cargo target dir: $CARGO_TARGET_DIR"
 echo "Lambda artifact dir: $LAMBDA_DIR"
 mkdir -p "$CARGO_TARGET_DIR" "$LAMBDA_DIR"
 
+# Keep CARGO_TARGET_DIR as an environment setting. cargo-lambda 1.9.1 forwards
+# its --target-dir CLI flag to `cargo metadata`, but that Cargo subcommand does
+# not accept --target-dir and the deploy-pipeline fails before compilation.
 cargo lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
-    --target-dir "$CARGO_TARGET_DIR" \
     --lambda-dir "$LAMBDA_DIR" \
     --target x86_64-unknown-linux-gnu \
     --compiler cargo \
