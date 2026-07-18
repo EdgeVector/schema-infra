@@ -25,6 +25,8 @@ set -euo pipefail
 export CARGO_HOME="${CARGO_HOME:-/build/schema-infra/.docker-cache/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-/build/schema-infra/.docker-cache/rustup}"
 export BUILD_PROFILE="${BUILD_PROFILE:-release}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/schema-infra-cargo-target}"
+export LAMBDA_DIR="${LAMBDA_DIR:-/build/schema-infra/fold/target/lambda}"
 
 yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
 
@@ -86,13 +88,18 @@ fi
 # The transform-wasm feature was removed from fold; do not reintroduce
 # ENABLE_TRANSFORM_WASM here.
 echo "Building with --features fastembed (native_component_cover resolve requires live embeddings)"
+echo "Cargo target dir: $CARGO_TARGET_DIR"
+echo "Lambda artifact dir: $LAMBDA_DIR"
+mkdir -p "$CARGO_TARGET_DIR" "$LAMBDA_DIR"
 
 cargo lambda build \
     --profile "$BUILD_PROFILE" \
     --output-format zip \
+    --target-dir "$CARGO_TARGET_DIR" \
+    --lambda-dir "$LAMBDA_DIR" \
     --target x86_64-unknown-linux-gnu \
     --compiler cargo \
     --locked \
     -p schema_service_server_lambda \
     --features fastembed
-chmod -R a+rwX target/lambda/ 2>/dev/null || true
+chmod -R a+rwX "$LAMBDA_DIR" 2>/dev/null || true
