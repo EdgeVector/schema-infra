@@ -7,9 +7,20 @@ set -euo pipefail
 
 REPO_SLUG="schema-infra"
 LABEL="com.edgevector.lastgit-canary-ticker-${REPO_SLUG}"
-PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-${REPO_SLUG}}"
-mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+DEFAULT_PLIST="${LAUNCH_AGENTS_DIR}/${LABEL}.plist"
+PLIST="${LASTGIT_DEPLOY_PLIST:-$DEFAULT_PLIST}"
+DOMAIN="gui/$(id -u)"
+CMD="${1:-install}"
+
+mkdir -p "$LOG_DIR"
+mkdir -p "$LAUNCH_AGENTS_DIR" 2>/dev/null || true
+
+if [ -z "${LASTGIT_DEPLOY_PLIST:-}" ] && { [ ! -d "$LAUNCH_AGENTS_DIR" ] || [ ! -w "$LAUNCH_AGENTS_DIR" ]; }; then
+  PLIST="${LOG_DIR}/${LABEL}.plist"
+fi
+mkdir -p "$(dirname "$PLIST")"
 
 resolve_repo_root() {
   local c
@@ -35,7 +46,9 @@ REPO_ROOT="$(resolve_repo_root)" || {
 }
 TICKER="${REPO_ROOT}/.lastgit/canary-ticker.sh"
 
-cat > "$PLIST" <<EOF
+case "$CMD" in
+  install)
+    cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -61,9 +74,38 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "installed $LABEL → $PLIST"
-echo "  ticker=$TICKER"
-echo "  repo_root=$REPO_ROOT"
-echo "  log_dir=$LOG_DIR"
+    launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$PLIST"
+    launchctl enable "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    launchctl kickstart -k "${DOMAIN}/${LABEL}" 2>/dev/null || true
+
+    echo "installed $LABEL -> $PLIST"
+    echo "  ticker=$TICKER"
+    echo "  repo_root=$REPO_ROOT"
+    echo "  log_dir=$LOG_DIR"
+    ;;
+  uninstall)
+    launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    rm -f "$PLIST"
+    echo "unloaded ${LABEL}"
+    ;;
+  status)
+    echo "expected ticker: ${TICKER}"
+    echo "expected repo_root: ${REPO_ROOT}"
+    echo "expected log_dir: ${LOG_DIR}"
+    if [ -f "$PLIST" ]; then
+      echo "installed plist:"
+      plutil -p "$PLIST" 2>/dev/null | sed -n '1,100p' || true
+    fi
+    echo "launchd state:"
+    launchctl print "${DOMAIN}/${LABEL}" 2>/dev/null | sed -n '1,80p' || echo "not loaded"
+    echo "recent canary state log:"
+    tail -20 "$LOG_DIR/canary.log" 2>/dev/null || true
+    echo "recent canary launchd log:"
+    tail -20 "$LOG_DIR/canary-ticker.launchd.log" 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: $0 install|uninstall|status" >&2
+    exit 2
+    ;;
+esac

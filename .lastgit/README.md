@@ -29,6 +29,11 @@ Deploy launchd must point at a durable checkout, normally
 `.lastgit/install-deploy-launchd.sh install` after deploy runner changes so the
 LaunchAgent cannot keep supervising a deleted or stale checkout.
 
+Canary ticker launchd follows the same durable-checkout rule. Run
+`.lastgit/install-canary-ticker-launchd.sh install` after canary runner changes,
+then `.lastgit/install-canary-ticker-launchd.sh status` to confirm the loaded
+plist points at an existing ticker script and to inspect the recent ticker log.
+
 ## Workflow
 
 ```bash
@@ -61,6 +66,15 @@ From a checkout of LastGit `main`:
 ```bash
 .lastgit/install-deploy-launchd.sh install
 .lastgit/install-deploy-launchd.sh status
+```
+
+## Install canary ticker
+
+From a checkout of LastGit `main`:
+
+```bash
+.lastgit/install-canary-ticker-launchd.sh install
+.lastgit/install-canary-ticker-launchd.sh status
 ```
 
 ## Pin

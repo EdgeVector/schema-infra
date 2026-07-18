@@ -33,8 +33,9 @@ Lambda is multi-tenant. **10% weighted alias traffic** is the serverless stand-i
 .lastgit/install-deploy-launchd.sh install
 .lastgit/install-deploy-launchd.sh status
 
-# Install canary ticker
-.lastgit/install-canary-ticker-launchd.sh
+# Install or repair canary ticker, then verify the loaded script/log.
+.lastgit/install-canary-ticker-launchd.sh install
+.lastgit/install-canary-ticker-launchd.sh status
 
 # State / logs
 ls ~/.lastgit/deploy-schema-infra/
