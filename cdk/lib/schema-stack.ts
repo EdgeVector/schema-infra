@@ -25,6 +25,68 @@ export interface SchemaServiceStackProps extends StackProps {
   environment?: string;
 }
 
+interface SchemaStoreR2DeployConfig {
+  bucketName: string;
+  endpointUrl: string;
+  accessKeyIdSecretName: string;
+  secretAccessKeySecretName: string;
+  region: string;
+}
+
+function envTrimmed(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+function firstEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = envTrimmed(name);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function schemaStoreR2DeployConfigFromEnv(): SchemaStoreR2DeployConfig | undefined {
+  const bucketName = firstEnv("SCHEMA_STORE_R2_DEPLOY_BUCKET", "SCHEMA_STORE_BUCKET");
+  const endpointUrl = firstEnv(
+    "SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL",
+    "SCHEMA_STORE_ENDPOINT_URL",
+    "SCHEMA_STORE_R2_ENDPOINT",
+  );
+  const accessKeyIdSecretName = firstEnv("SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME");
+  const secretAccessKeySecretName = firstEnv(
+    "SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME",
+  );
+  const region = firstEnv("SCHEMA_STORE_R2_REGION", "SCHEMA_STORE_REGION") ?? "auto";
+
+  const provided = [
+    bucketName,
+    endpointUrl,
+    accessKeyIdSecretName,
+    secretAccessKeySecretName,
+  ].filter(Boolean).length;
+  if (provided === 0) {
+    return undefined;
+  }
+  if (provided !== 4) {
+    throw new Error(
+      "R2 schema-store deploy config is partial. Set SCHEMA_STORE_R2_DEPLOY_BUCKET, " +
+        "SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL, SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME, " +
+        "and SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME together.",
+    );
+  }
+
+  return {
+    bucketName: bucketName!,
+    endpointUrl: endpointUrl!,
+    accessKeyIdSecretName: accessKeyIdSecretName!,
+    secretAccessKeySecretName: secretAccessKeySecretName!,
+    region,
+  };
+}
+
 export class SchemaServiceStack extends Stack {
   constructor(scope: Construct, id: string, props?: SchemaServiceStackProps) {
     super(scope, id, props);
@@ -51,6 +113,21 @@ export class SchemaServiceStack extends Stack {
       process.env.OBS_SENTRY_RELEASE ?? process.env.OBS_RELEASE ?? "";
     const obsSentryEnvironment =
       process.env.OBS_SENTRY_ENVIRONMENT ?? envName;
+    const schemaStoreR2Config = schemaStoreR2DeployConfigFromEnv();
+    const schemaStoreR2AccessKeyIdSecret = schemaStoreR2Config
+      ? secretsmanager.Secret.fromSecretNameV2(
+          this,
+          "SchemaStoreR2AccessKeyIdSecret",
+          schemaStoreR2Config.accessKeyIdSecretName,
+        )
+      : undefined;
+    const schemaStoreR2SecretAccessKeySecret = schemaStoreR2Config
+      ? secretsmanager.Secret.fromSecretNameV2(
+          this,
+          "SchemaStoreR2SecretAccessKeySecret",
+          schemaStoreR2Config.secretAccessKeySecretName,
+        )
+      : undefined;
 
     // =====================================================
     // S3 Bucket for Schema Service state
@@ -233,7 +310,20 @@ exports.handler = async (event) => {
         // S3BlobPersistence. No filesystem required, no VPC, no EFS.
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
-        SCHEMA_STORE_BUCKET: schemaBucket.bucketName,
+        SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
+        ...(schemaStoreR2Config
+          ? {
+              // Optional R2/S3-compatible deploy wiring. Credential values are
+              // CloudFormation dynamic references to Secrets Manager, not raw
+              // deploy-runner env vars.
+              SCHEMA_STORE_ENDPOINT_URL: schemaStoreR2Config.endpointUrl,
+              SCHEMA_STORE_REGION: schemaStoreR2Config.region,
+              SCHEMA_STORE_ACCESS_KEY_ID:
+                schemaStoreR2AccessKeyIdSecret!.secretValue.unsafeUnwrap(),
+              SCHEMA_STORE_SECRET_ACCESS_KEY:
+                schemaStoreR2SecretAccessKeySecret!.secretValue.unsafeUnwrap(),
+            }
+          : {}),
         // Dev-only: activate Phase B's dual-signal canonicalization
         // gate so the `fold-dev-node` dogfood loop stops collapsing
         // structurally-identical inputs into the wrong canonical.
