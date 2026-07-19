@@ -26,6 +26,25 @@ Lambda is multi-tenant. **10% weighted alias traffic** is the serverless stand-i
 | `DEPLOY_FREEZE` | unset | Skip deploys |
 | `SCHEMA_CANARY_ALARM_NAMES` | empty | Optional CW alarms for soak gate |
 
+## R2-backed Schema Store
+
+By default, CDK creates an AWS S3 bucket for `SCHEMA_STORE_BUCKET`. To deploy the
+Schema Service Lambda against a Cloudflare R2/S3-compatible registry store, set
+the full deploy-time config together before running `deploy.sh` or the LastGit
+deploy watcher:
+
+| Variable | Meaning |
+|---|---|
+| `SCHEMA_STORE_R2_DEPLOY_BUCKET` | R2 bucket name passed to `SCHEMA_STORE_BUCKET` |
+| `SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL` | R2 S3 API endpoint passed to `SCHEMA_STORE_ENDPOINT_URL` |
+| `SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME` | AWS Secrets Manager secret name whose value is the R2 access key id |
+| `SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME` | AWS Secrets Manager secret name whose value is the R2 secret access key |
+| `SCHEMA_STORE_R2_REGION` | Optional region, defaults to `auto` |
+
+Do not export raw R2 key values into the deploy environment. CDK emits Lambda
+environment values for the two credential variables as CloudFormation dynamic
+references to Secrets Manager.
+
 ## Ops
 
 ```bash
