@@ -13,11 +13,14 @@ fi
 
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
-for f in ./*.sh .lastgit/*.sh scripts/*.sh; do
+for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh; do
   [ -e "$f" ] || continue
   echo "bash -n $f"
   bash -n "$f"
 done
+echo "== canary helper tests =="
+bash scripts/deploy/test-canary-weight-pin.sh
+bash scripts/deploy/test-canary-alarm-gate.sh
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

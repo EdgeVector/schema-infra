@@ -162,21 +162,19 @@ PY
 # Check CloudWatch alarms for the schema function (any ALARM → fail).
 canary_alarms_ok() {
   local region="$1"
-  # Soft check: no hard-coded alarm names yet for schema; always OK unless
-  # SCHEMA_CANARY_ALARM_NAMES is set (space-separated).
-  local names="${SCHEMA_CANARY_ALARM_NAMES:-}"
-  if [ -z "$names" ]; then
-    canary_log "canary: no SCHEMA_CANARY_ALARM_NAMES configured — soak gate is time-only"
-    return 0
-  fi
+  # Production promotion must never degrade to a time-only gate. Operators
+  # may override this set, but an empty override still falls back to the two
+  # alarms provisioned by SchemaServiceStack-prod.
+  local names="${SCHEMA_CANARY_ALARM_NAMES:-schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod}"
   local name state
   for name in $names; do
     state=$(aws cloudwatch describe-alarms --alarm-names "$name" --region "$region" \
-      --query 'MetricAlarms[0].StateValue' --output text 2>/dev/null || echo "OK")
+      --query 'MetricAlarms[0].StateValue' --output text 2>/dev/null || echo "ERROR")
     canary_log "canary: alarm $name state=$state"
-    if [ "$state" = "ALARM" ]; then
-      return 1
-    fi
+    case "$state" in
+      OK|INSUFFICIENT_DATA) ;;
+      *) return 1 ;;
+    esac
   done
   return 0
 }

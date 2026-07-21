@@ -14,7 +14,8 @@
 #   LASTGIT_DEPLOY_SKIP_PROD=1   stop after successful dev smoke
 #   CANARY_SOAK_HOURS=24         canary soak duration
 #   CANARY_WEIGHT=0.1            fraction of prod traffic on new version
-#   SCHEMA_CANARY_ALARM_NAMES    optional space-separated CW alarm names for soak gate
+#   SCHEMA_CANARY_ALARM_NAMES    optional override; defaults to the required
+#                                production mutation-gate alarm set
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/deploy/canary-lib.sh
