@@ -449,6 +449,13 @@ exports.handler = async (event) => {
         integrationId: "SchemaAvailableIntegrationV1",
       },
       {
+        // The real schema_service client obtains its stateless HMAC PoW
+        // challenge here after POST /v1/schemas rejects a novel mutation.
+        path: "/v1/schemas/mutation-challenge",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaMutationChallengeIntegrationV1",
+      },
+      {
         path: "/v1/schemas/similar/{schemaId}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SchemaSimilarIntegrationV1",

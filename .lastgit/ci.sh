@@ -21,6 +21,7 @@ done
 echo "== canary helper tests =="
 bash scripts/deploy/test-canary-weight-pin.sh
 bash scripts/deploy/test-canary-alarm-gate.sh
+bash scripts/deploy/test-prove-mutation-gate.sh
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

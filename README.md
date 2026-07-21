@@ -81,6 +81,22 @@ Lambda handler source lives in the [`EdgeVector/fold`](https://github.com/EdgeVe
 ./deploy.sh prod
 ```
 
+### Mutation-gate live proof
+
+After deployment, prove the Schema Service proof-of-work path with the real
+Rust client and live AWS telemetry:
+
+```bash
+scripts/deploy/prove-mutation-gate.sh
+```
+
+The command defaults to dev, verifies enforcement, a transparent
+challenge/solve/registration, an idempotent repost, DynamoDB quota state, and
+CloudWatch rejection/acceptance signals. Add `--quota-probe` for the bounded
+dev-only run that stops on the first server-side quota rejection. Production
+requires both `--environment prod` and `--allow-prod`; the quota probe is
+refused in production. Output is a single secret-safe JSON report.
+
 ### Custom Domain
 
 To enable the `schema.folddb.com` custom domain:
