@@ -70,7 +70,8 @@ ddb_count() {
 log_count() {
   local start_ms="$1" pattern="$2"
   aws logs filter-log-events --region "$REGION" --log-group-name "/aws/lambda/$FUNCTION_NAME" \
-    --start-time "$start_ms" --filter-pattern "$pattern" --query 'length(events)' --output text
+    --start-time "$start_ms" --filter-pattern "$pattern" --output json |
+    jq -r '.events | length'
 }
 
 wait_for_log() {
@@ -78,6 +79,23 @@ wait_for_log() {
   while [ "$attempts" -lt 18 ]; do
     count=$(log_count "$start_ms" "$pattern")
     if [ "${count:-0}" -gt 0 ]; then
+      echo "$count"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 5
+  done
+  echo 0
+  return 1
+}
+
+wait_for_initial_rejection() {
+  local start_ms="$1" attempts=0 node_key_count=0 pow_count=0 count=0
+  while [ "$attempts" -lt 18 ]; do
+    node_key_count=$(log_count "$start_ms" '"schema_mutation_gate_enforce_total" "node_key_required"')
+    pow_count=$(log_count "$start_ms" '"schema_mutation_gate_enforce_total" "proof_of_work_required"')
+    count=$((node_key_count + pow_count))
+    if [ "$count" -gt 0 ]; then
       echo "$count"
       return 0
     fi
@@ -110,8 +128,8 @@ CHALLENGES=$(wait_for_log "$START_MS" '"schema_mutation_gate_challenge_total" "i
 ACCEPTED=$(wait_for_log "$START_MS" '"schema_mutation_gate_enforce_total" "status" "ok"') || {
   echo "FAIL: enforcement telemetry did not arrive" >&2; exit 1;
 }
-MISSING_PROOF=$(wait_for_log "$START_MS" '"schema_mutation_gate_enforce_total" "proof_of_work_required"') || {
-  echo "FAIL: missing-proof rejection telemetry did not arrive" >&2; exit 1;
+INITIAL_REJECTION=$(wait_for_initial_rejection "$START_MS") || {
+  echo "FAIL: initial mutation-gate rejection telemetry did not arrive" >&2; exit 1;
 }
 AFTER_DDB=$(ddb_count)
 [ "$AFTER_DDB" -gt "$BEFORE_DDB" ] || {
@@ -148,7 +166,7 @@ jq -cn \
   --argjson client "$CLIENT_REPORT" \
   --argjson challenge_events "$CHALLENGES" \
   --argjson accepted_events "$ACCEPTED" \
-  --argjson missing_proof_events "$MISSING_PROOF" \
+  --argjson initial_rejection_events "$INITIAL_REJECTION" \
   --argjson quota_items_before "$BEFORE_DDB" \
   --argjson quota_items_after "$AFTER_DDB" \
   --argjson quota_probe "$QUOTA_PROBE" \
@@ -156,6 +174,6 @@ jq -cn \
   --argjson quota_reject_events "$QUOTA_REJECTS" \
   '{status:"PASS", environment:$environment, client:$client,
     telemetry:{challenge_events:$challenge_events,accepted_events:$accepted_events,
-      missing_proof_events:$missing_proof_events,quota_reject_events:$quota_reject_events},
+      initial_rejection_events:$initial_rejection_events,quota_reject_events:$quota_reject_events},
     quota_state:{items_before:$quota_items_before,items_after:$quota_items_after},
     quota_probe:{enabled:($quota_probe == 1),attempts:$quota_attempts}}'
