@@ -18,8 +18,14 @@ if bash "$PROBE" --max-quota-attempts 0 >/dev/null 2>&1; then
   echo "FAIL: zero quota attempts accepted" >&2
   exit 1
 fi
-if bash "$PROBE" --max-quota-attempts 131 >/dev/null 2>&1; then
+if bash "$PROBE" --max-quota-attempts 25 >/dev/null 2>&1; then
   echo "FAIL: excessive quota attempts accepted" >&2
+  exit 1
+fi
+
+grep -F -- '--quota-attempts "$MAX_QUOTA_ATTEMPTS"' "$PROBE" >/dev/null
+if grep -F -- 'quota-${START_EPOCH}-${QUOTA_ATTEMPTS}' "$PROBE" >/dev/null; then
+  echo "FAIL: per-process quota loop returned" >&2
   exit 1
 fi
 
