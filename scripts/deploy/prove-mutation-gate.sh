@@ -6,7 +6,7 @@ set -euo pipefail
 ENVIRONMENT="dev"
 ALLOW_PROD=0
 QUOTA_PROBE=0
-MAX_QUOTA_ATTEMPTS=65
+MAX_QUOTA_ATTEMPTS=12
 
 usage() {
   echo "usage: $0 [--environment dev|prod] [--allow-prod] [--quota-probe] [--max-quota-attempts N]" >&2
@@ -35,8 +35,8 @@ esac
 case "$MAX_QUOTA_ATTEMPTS" in
   ''|*[!0-9]*) echo "FAIL: --max-quota-attempts must be an integer" >&2; exit 2 ;;
 esac
-[ "$MAX_QUOTA_ATTEMPTS" -ge 1 ] && [ "$MAX_QUOTA_ATTEMPTS" -le 130 ] || {
-  echo "FAIL: --max-quota-attempts must be between 1 and 130" >&2
+[ "$MAX_QUOTA_ATTEMPTS" -ge 2 ] && [ "$MAX_QUOTA_ATTEMPTS" -le 24 ] || {
+  echo "FAIL: --max-quota-attempts must be between 2 and 24" >&2
   exit 2
 }
 
@@ -139,24 +139,20 @@ AFTER_DDB=$(ddb_count)
 
 QUOTA_ATTEMPTS=0
 QUOTA_REJECTS=0
+QUOTA_REPORT=null
 if [ "$QUOTA_PROBE" -eq 1 ]; then
   QUOTA_START_MS="$(date +%s)000"
-  while [ "$QUOTA_ATTEMPTS" -lt "$MAX_QUOTA_ATTEMPTS" ]; do
-    QUOTA_ATTEMPTS=$((QUOTA_ATTEMPTS + 1))
-    if ! cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
-      -p schema_service_client --example schema_pow_live_probe -- \
-      --url "$API_URL" --environment dev \
-      --run-id "quota-${START_EPOCH}-${QUOTA_ATTEMPTS}" >/dev/null; then
-      QUOTA_REJECTS=$(wait_for_log "$QUOTA_START_MS" '"schema_mutation_gate_enforce_total" "quota_exceeded"' || true)
-      [ "$QUOTA_REJECTS" -gt 0 ] || {
-        echo "FAIL: client failed before a quota_exceeded signal appeared" >&2
-        exit 1
-      }
-      break
-    fi
-  done
+  QUOTA_REPORT=$(cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
+    -p schema_service_client --example schema_pow_live_probe -- \
+    --url "$API_URL" --environment dev --run-id "quota-${START_EPOCH}" \
+    --quota-attempts "$MAX_QUOTA_ATTEMPTS")
+  echo "$QUOTA_REPORT" | jq -e \
+    '.status == "PASS" and .quota_probe == true and .rejection == "quota_exceeded" and .private_key_persisted == false' \
+    >/dev/null
+  QUOTA_ATTEMPTS=$(echo "$QUOTA_REPORT" | jq -r '.attempts')
+  QUOTA_REJECTS=$(wait_for_log "$QUOTA_START_MS" '"schema_mutation_gate_enforce_total" "quota_exceeded"' || true)
   [ "$QUOTA_REJECTS" -gt 0 ] || {
-    echo "FAIL: no quota rejection within $MAX_QUOTA_ATTEMPTS attempts" >&2
+    echo "FAIL: quota client passed but quota_exceeded telemetry did not arrive" >&2
     exit 1
   }
 fi
@@ -171,9 +167,10 @@ jq -cn \
   --argjson quota_items_after "$AFTER_DDB" \
   --argjson quota_probe "$QUOTA_PROBE" \
   --argjson quota_attempts "$QUOTA_ATTEMPTS" \
+  --argjson quota_report "$QUOTA_REPORT" \
   --argjson quota_reject_events "$QUOTA_REJECTS" \
   '{status:"PASS", environment:$environment, client:$client,
     telemetry:{challenge_events:$challenge_events,accepted_events:$accepted_events,
       initial_rejection_events:$initial_rejection_events,quota_reject_events:$quota_reject_events},
     quota_state:{items_before:$quota_items_before,items_after:$quota_items_after},
-    quota_probe:{enabled:($quota_probe == 1),attempts:$quota_attempts}}'
+    quota_probe:{enabled:($quota_probe == 1),attempts:$quota_attempts,report:$quota_report}}'
