@@ -27,6 +27,12 @@ export RUSTUP_HOME="${RUSTUP_HOME:-/build/schema-infra/.docker-cache/rustup}"
 export BUILD_PROFILE="${BUILD_PROFILE:-release}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/schema-infra-cargo-target}"
 export LAMBDA_DIR="${LAMBDA_DIR:-/build/schema-infra/fold/target/lambda}"
+# Docker Desktop runs this x86_64 image through QEMU on Apple Silicon. Parallel
+# Cargo occasionally leaves a fork-before-exec child permanently blocked on a
+# futex under that emulation, wedging the single-concurrency deploy queue. Keep
+# the Lambda build serial by default; native runners can explicitly raise the
+# value after proving their platform does not exhibit the QEMU deadlock.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 
 yum install -y gcc gcc-c++ cmake3 openssl-devel pkg-config tar gzip bzip2-libs perl git > /dev/null 2>&1
 
@@ -90,6 +96,7 @@ fi
 echo "Building with --features fastembed (native_component_cover resolve requires live embeddings)"
 echo "Cargo target dir: $CARGO_TARGET_DIR"
 echo "Lambda artifact dir: $LAMBDA_DIR"
+echo "Cargo build jobs: $CARGO_BUILD_JOBS"
 mkdir -p "$CARGO_TARGET_DIR" "$LAMBDA_DIR"
 
 # Keep CARGO_TARGET_DIR as an environment setting. cargo-lambda 1.9.1 forwards
