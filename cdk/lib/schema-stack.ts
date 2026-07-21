@@ -791,6 +791,27 @@ exports.handler = async (event) => {
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       },
     );
+    const internalErrorAlarm = new cloudwatch.Alarm(
+      this,
+      "MutationGateInternalErrorAlarm",
+      {
+        alarmName: `schema-mutation-gate-internal-error-${envName}`,
+        alarmDescription:
+          "Schema mutation gate emitted an internal enforcement error; block canary promotion and inspect before retrying.",
+        metric: mutationGateMetric(
+          "RejectInternal",
+          "internal errors",
+          Duration.minutes(5),
+          "sum",
+        ),
+        threshold: 0,
+        evaluationPeriods: 1,
+        datapointsToAlarm: 1,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      },
+    );
 
     const mutationGateDashboard = new cloudwatch.Dashboard(
       this,
@@ -830,8 +851,13 @@ exports.handler = async (event) => {
       }),
       new cloudwatch.AlarmWidget({
         title: "Sustained hourly-cap alarm",
-        width: 12,
+        width: 6,
         alarm: hourlyQuotaAlarm,
+      }),
+      new cloudwatch.AlarmWidget({
+        title: "Mutation-gate internal-error alarm",
+        width: 6,
+        alarm: internalErrorAlarm,
       }),
     );
     mutationGateDashboard.addWidgets(
@@ -942,6 +968,10 @@ exports.handler = async (event) => {
     new CfnOutput(this, "MutationGateHourlyQuotaAlarmName", {
       value: hourlyQuotaAlarm.alarmName,
       description: "Alarm for sustained schema mutation gate hourly quota rejections",
+    });
+    new CfnOutput(this, "MutationGateInternalErrorAlarmName", {
+      value: internalErrorAlarm.alarmName,
+      description: "Alarm that blocks canary promotion on mutation-gate internal errors",
     });
 
     new CfnOutput(this, "MutationGateQuotaTableName", {

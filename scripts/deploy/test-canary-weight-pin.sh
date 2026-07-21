@@ -68,9 +68,15 @@ fi
 # no-op when old==new
 : >"$MOCK_AWS_UPDATE"
 if declare -f set_canary_weights_one >/dev/null; then
-  set_canary_weights_one "Fn" "us-east-1" "9" "9"
+  if set_canary_weights_one "Fn" "us-east-1" "9" "9"; then
+    echo "expected equal versions to skip weighted pin" >&2
+    exit 1
+  fi
 else
-  set_canary_weights "Fn" "us-east-1" "9" "9"
+  if set_canary_weights "Fn" "us-east-1" "9" "9"; then
+    echo "expected equal versions to skip weighted pin" >&2
+    exit 1
+  fi
 fi
 if [ -s "$MOCK_AWS_UPDATE" ]; then
   echo "expected no update-alias when old==new" >&2
