@@ -122,6 +122,21 @@ case "$code" in
   *) echo "FAIL /v1/schemas/resolve HTTP $code"; fail=1 ;;
 esac
 
+# PoW clients must be able to obtain the stateless mutation challenge. An
+# empty payload is intentionally invalid, but must reach Lambda (400), not the
+# API Gateway missing-route response (404).
+code=$(curl -sS -m 20 -o /tmp/schema-mutation-challenge.out -w "%{http_code}" \
+  -X POST "${API_URL}/v1/schemas/mutation-challenge" \
+  -H 'Content-Type: application/json' -d '{}' || echo 000)
+case "$code" in
+  400) echo "OK   /v1/schemas/mutation-challenge HTTP 400 (mounted)" ;;
+  404)
+    echo "FAIL /v1/schemas/mutation-challenge HTTP 404 (route missing on gateway)"
+    fail=1
+    ;;
+  *) echo "FAIL /v1/schemas/mutation-challenge HTTP $code"; fail=1 ;;
+esac
+
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)
