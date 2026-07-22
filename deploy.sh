@@ -7,10 +7,13 @@ ENVIRONMENT="${1:-dev}"
 
 # Parse flags (after the first positional arg)
 SKIP_INFRA=false
+SKIP_BUILD=false
+YES_FLAG=false
 shift 2>/dev/null || true
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --skip-infra) SKIP_INFRA=true ;;
+        --skip-build) SKIP_BUILD=true ;;
         --yes) YES_FLAG=true ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
@@ -60,8 +63,19 @@ export AWS_REGION="$REGION"
 export AWS_DEFAULT_REGION="$REGION"
 
 # Build Lambda (submodule-backed; see build.sh header)
-echo "Building Lambda (profile: $BUILD_PROFILE)..."
-"$SCRIPT_DIR/build.sh" "$BUILD_PROFILE"
+if [ "$SKIP_BUILD" = false ]; then
+    echo "Building Lambda (profile: $BUILD_PROFILE)..."
+    "$SCRIPT_DIR/build.sh" "$BUILD_PROFILE"
+else
+    ZIP_PATH="$SCRIPT_DIR/fold/target/lambda/server_lambda/bootstrap.zip"
+    EXTRACTED_DIR="$SCRIPT_DIR/fold/target/lambda/server_lambda-extracted"
+    if [ ! -s "$ZIP_PATH" ] || [ ! -d "$EXTRACTED_DIR" ]; then
+        echo "ERROR: --skip-build requested but Lambda artifact is missing." >&2
+        echo "       Expected $ZIP_PATH and $EXTRACTED_DIR" >&2
+        exit 1
+    fi
+    echo "Reusing existing Lambda artifact (--skip-build): $ZIP_PATH"
+fi
 
 # Deploy CDK
 if [ "$SKIP_INFRA" = false ]; then
