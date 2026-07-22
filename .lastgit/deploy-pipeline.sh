@@ -64,7 +64,11 @@ if [ -n "${FN:-}" ] && [ "$FN" != "None" ]; then
   canary_log "pre-prod alias version old=${OLD_VER:-none} fn=$FN"
 fi
 
-./deploy.sh prod --yes
+# Reuse the exact Lambda artifact that already passed the dev deployment and
+# smoke test. Building once keeps the serialized deploy queue out of a second
+# Docker/Rust compile under x86 QEMU while preserving the prod CDK deploy,
+# smoke, alarm, and canary stages.
+./deploy.sh prod --yes --skip-build
 
 echo "== STAGE 4: smoke PROD =="
 bash ./scripts/deploy/smoke-dev.sh prod
