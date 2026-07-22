@@ -70,12 +70,14 @@ start_watch() {
     --state-file "$LOG_DIR/deploy.cursor" --scratch-dir "$LOG_DIR/scratch" \
     >>"$LOG_DIR/deploy.log" 2>&1 &
   WATCH_PID=$!
+  echo "pid=$WATCH_PID"
 }
 install_legacy_cargo_guard
 start_cargo_guard
 start_watch
-echo "pid=$WATCH_PID"
 while true; do
-  sleep 5
-  kill -0 "$WATCH_PID" 2>/dev/null || { sleep 2; start_watch; }
+  watch_status=0
+  wait "$WATCH_PID" || watch_status=$?
+  echo "deploy-run: watch pid=$WATCH_PID exited status=$watch_status; restarting"
+  start_watch
 done
