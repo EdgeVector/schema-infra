@@ -24,6 +24,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
+# shellcheck source=scripts/deploy/telemetry.sh
+source "$SCRIPT_DIR/scripts/deploy/telemetry.sh"
 
 PROFILE="${1:-${BUILD_PROFILE:-release}}"
 
@@ -109,6 +111,7 @@ fi
 
 echo ""
 echo "=== Building Lambda zip (Docker: amazonlinux:2023) ==="
+stage_started="$(schema_telemetry_stage_start build)"
 docker run --rm \
     --platform linux/amd64 \
     -v "$DOCKER_SCRIPT_DIR":/build/schema-infra \
@@ -119,6 +122,7 @@ docker run --rm \
     -e GH_PAT="${GH_PAT:-}" \
     amazonlinux:2023 \
     bash /build/schema-infra/scripts/lambda-container-build.sh
+schema_telemetry_stage_end build "$stage_started"
 
 copy_mirror_lambda_artifact
 
@@ -143,6 +147,7 @@ echo "=== Lambda artifact ==="
 echo "Zip:       $ZIP_PATH (${SIZE_MB}MB)"
 echo "Extracted: $EXTRACTED_DIR"
 ls -la "$EXTRACTED_DIR"
+"$SCRIPT_DIR/scripts/deploy/dependency-budget.sh"
 
 # =============================================================
 # 4. Fastembed Layer — download model files into the Layer

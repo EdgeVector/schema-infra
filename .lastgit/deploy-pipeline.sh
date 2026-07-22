@@ -20,9 +20,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/deploy/canary-lib.sh
 source "$(pwd)/scripts/deploy/canary-lib.sh"
+# shellcheck source=scripts/deploy/telemetry.sh
+source "$(pwd)/scripts/deploy/telemetry.sh"
 
 OID="${LASTGIT_CI_OID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 echo "== [schema staged-deploy] oid=$OID =="
+schema_telemetry_emit pipeline_start "oid=$OID" "telemetry_file=$(schema_telemetry_file)"
 
 if [ "${DEPLOY_FREEZE:-}" = "true" ]; then
   echo "DEPLOY_FREEZE=true — skip"
@@ -41,11 +44,15 @@ fi
 # ---------- 1. DEV deploy ----------
 echo "== STAGE 1: deploy DEV =="
 export AWS_REGION=us-west-2 AWS_DEFAULT_REGION=us-west-2
+stage_started="$(schema_telemetry_stage_start dev_deploy)"
 ./deploy.sh dev --yes
+schema_telemetry_stage_end dev_deploy "$stage_started"
 
 # ---------- 2. DEV smoke ----------
 echo "== STAGE 2: smoke DEV =="
+stage_started="$(schema_telemetry_stage_start dev_smoke)"
 bash ./scripts/deploy/smoke-dev.sh
+schema_telemetry_stage_end dev_smoke "$stage_started"
 
 if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
   echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
@@ -68,17 +75,23 @@ fi
 # smoke test. Building once keeps the serialized deploy queue out of a second
 # Docker/Rust compile under x86 QEMU while preserving the prod CDK deploy,
 # smoke, alarm, and canary stages.
+stage_started="$(schema_telemetry_stage_start prod_deploy_skip_build)"
 ./deploy.sh prod --yes --skip-build
+schema_telemetry_stage_end prod_deploy_skip_build "$stage_started"
 
 echo "== STAGE 4: smoke PROD =="
+stage_started="$(schema_telemetry_stage_start prod_smoke)"
 bash ./scripts/deploy/smoke-dev.sh prod
+schema_telemetry_stage_end prod_smoke "$stage_started"
 
 FN=$(schema_fn_name prod us-east-1)
 NEW_VER=$(alias_version "$FN" us-east-1)
 canary_log "post-prod alias version new=$NEW_VER fn=$FN"
 
 # Re-pin 10% canary if we had a prior version; only write soak state when pin lands.
+stage_started="$(schema_telemetry_stage_start canary_pin)"
 if set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER"; then
+  schema_telemetry_stage_end canary_pin "$stage_started"
   STARTED=$(canary_ts)
   export CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
   PROMOTE_AFTER=$(python3 - <<PY
@@ -93,6 +106,7 @@ PY
   echo "lastgit schema deploy-pipeline PASSED (prod canary soaking until $PROMOTE_AFTER)"
   echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"
 else
+  schema_telemetry_stage_end canary_pin "$stage_started"
   clear_canary_state 2>/dev/null || rm -f "${STATE_FILE:-}"
   canary_log "canary: no weighted pin (old==new or missing) — no soak state"
   echo "lastgit schema deploy-pipeline PASSED (prod deploy; no canary pin needed)"
