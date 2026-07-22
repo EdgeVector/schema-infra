@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PROBE="$ROOT/scripts/deploy/prove-mutation-gate.sh"
+BOUNDED="$ROOT/scripts/deploy/bounded-command.py"
 
 bash "$PROBE" --help >/dev/null
 
@@ -34,5 +35,36 @@ fi
 # before comparing the count as a shell integer.
 grep -F -- '--output json |' "$PROBE" >/dev/null
 grep -F "jq -r '.events | length'" "$PROBE" >/dev/null
+
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/schema-pow-bounded-test.XXXXXX")
+trap 'rm -rf "$tmp_dir"' EXIT
+
+python3 "$BOUNDED" --phase success-case --timeout-seconds 2 --progress-seconds 1 \
+  --stdout-file "$tmp_dir/success.out" --stderr-file "$tmp_dir/success.err" -- \
+  sh -c 'printf success-output; printf private-diagnostic >&2'
+[ "$(cat "$tmp_dir/success.out")" = "success-output" ] || {
+  echo "FAIL: bounded command did not capture stdout" >&2
+  exit 1
+}
+
+set +e
+python3 "$BOUNDED" --phase timeout-case --timeout-seconds 1 --progress-seconds 1 \
+  --stdout-file "$tmp_dir/timeout.out" --stderr-file "$tmp_dir/timeout.err" -- \
+  sh -c 'printf secret-timeout-diagnostic >&2; sleep 5' \
+  2>"$tmp_dir/helper.err"
+timeout_status=$?
+set -e
+[ "$timeout_status" -eq 124 ] || {
+  echo "FAIL: bounded command timeout returned $timeout_status, expected 124" >&2
+  exit 1
+}
+grep -F 'phase=timeout-case exceeded timeout_seconds=1' "$tmp_dir/helper.err" >/dev/null
+if grep -F 'secret-timeout-diagnostic' "$tmp_dir/helper.err" >/dev/null; then
+  echo "FAIL: bounded command leaked captured stderr" >&2
+  exit 1
+fi
+
+grep -F -- '--phase real-client-proof' "$PROBE" >/dev/null
+grep -F -- '--phase quota-client-proof' "$PROBE" >/dev/null
 
 echo "ok mutation-gate proof guards"

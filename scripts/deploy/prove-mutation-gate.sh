@@ -7,6 +7,9 @@ ENVIRONMENT="dev"
 ALLOW_PROD=0
 QUOTA_PROBE=0
 MAX_QUOTA_ATTEMPTS=12
+CLIENT_PROBE_TIMEOUT_SECONDS="${SCHEMA_POW_CLIENT_PROBE_TIMEOUT_SECONDS:-600}"
+QUOTA_PROBE_TIMEOUT_SECONDS="${SCHEMA_POW_QUOTA_PROBE_TIMEOUT_SECONDS:-900}"
+PROBE_PROGRESS_SECONDS="${SCHEMA_POW_PROBE_PROGRESS_SECONDS:-30}"
 
 usage() {
   echo "usage: $0 [--environment dev|prod] [--allow-prod] [--quota-probe] [--max-quota-attempts N]" >&2
@@ -40,11 +43,20 @@ esac
   exit 2
 }
 
-for command_name in aws cargo jq; do
+for timeout_value in "$CLIENT_PROBE_TIMEOUT_SECONDS" "$QUOTA_PROBE_TIMEOUT_SECONDS" "$PROBE_PROGRESS_SECONDS"; do
+  case "$timeout_value" in
+    ''|*[!0-9]*) echo "FAIL: proof timeout settings must be positive integers" >&2; exit 2 ;;
+  esac
+  [ "$timeout_value" -ge 1 ] || { echo "FAIL: proof timeout settings must be positive integers" >&2; exit 2; }
+done
+
+for command_name in aws cargo jq python3; do
   command -v "$command_name" >/dev/null || { echo "FAIL: missing $command_name" >&2; exit 1; }
 done
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+BOUNDED_COMMAND="$ROOT/scripts/deploy/bounded-command.py"
+[ -f "$BOUNDED_COMMAND" ] || { echo "FAIL: bounded command helper missing" >&2; exit 1; }
 STACK="SchemaServiceStack-$ENVIRONMENT"
 stack_output() {
   aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
@@ -75,14 +87,19 @@ log_count() {
 }
 
 wait_for_log() {
-  local start_ms="$1" pattern="$2" attempts=0 count=0
+  local phase="$1" start_ms="$2" pattern="$3" attempts=0 count=0
+  echo "phase=$phase started timeout_seconds=90" >&2
   while [ "$attempts" -lt 18 ]; do
     count=$(log_count "$start_ms" "$pattern")
     if [ "${count:-0}" -gt 0 ]; then
       echo "$count"
+      echo "phase=$phase complete" >&2
       return 0
     fi
     attempts=$((attempts + 1))
+    if [ $((attempts % 6)) -eq 0 ]; then
+      echo "phase=$phase running elapsed_seconds=$((attempts * 5))" >&2
+    fi
     sleep 5
   done
   echo 0
@@ -91,15 +108,20 @@ wait_for_log() {
 
 wait_for_initial_rejection() {
   local start_ms="$1" attempts=0 node_key_count=0 pow_count=0 count=0
+  echo "phase=initial-rejection-telemetry started timeout_seconds=90" >&2
   while [ "$attempts" -lt 18 ]; do
     node_key_count=$(log_count "$start_ms" '"schema_mutation_gate_enforce_total" "node_key_required"')
     pow_count=$(log_count "$start_ms" '"schema_mutation_gate_enforce_total" "proof_of_work_required"')
     count=$((node_key_count + pow_count))
     if [ "$count" -gt 0 ]; then
       echo "$count"
+      echo "phase=initial-rejection-telemetry complete" >&2
       return 0
     fi
     attempts=$((attempts + 1))
+    if [ $((attempts % 6)) -eq 0 ]; then
+      echo "phase=initial-rejection-telemetry running elapsed_seconds=$((attempts * 5))" >&2
+    fi
     sleep 5
   done
   echo 0
@@ -118,14 +140,25 @@ if [ "$ENVIRONMENT" = prod ]; then
 else
   PROBE_ARGS+=(--run-id "$RUN_ID")
 fi
-CLIENT_REPORT=$(cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
-  -p schema_service_client --example schema_pow_live_probe -- "${PROBE_ARGS[@]}")
+PROBE_STDOUT=$(mktemp "${TMPDIR:-/tmp}/schema-pow-client.XXXXXX")
+PROBE_STDERR=$(mktemp "${TMPDIR:-/tmp}/schema-pow-client-stderr.XXXXXX")
+cleanup_probe_files() { rm -f "$PROBE_STDOUT" "$PROBE_STDERR"; }
+trap cleanup_probe_files EXIT
+python3 "$BOUNDED_COMMAND" \
+  --phase real-client-proof \
+  --timeout-seconds "$CLIENT_PROBE_TIMEOUT_SECONDS" \
+  --progress-seconds "$PROBE_PROGRESS_SECONDS" \
+  --stdout-file "$PROBE_STDOUT" \
+  --stderr-file "$PROBE_STDERR" \
+  -- cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
+    -p schema_service_client --example schema_pow_live_probe -- "${PROBE_ARGS[@]}"
+CLIENT_REPORT=$(cat "$PROBE_STDOUT")
 echo "$CLIENT_REPORT" | jq -e '.status == "PASS" and .private_key_persisted == false' >/dev/null
 
-CHALLENGES=$(wait_for_log "$START_MS" '"schema_mutation_gate_challenge_total" "issued"') || {
+CHALLENGES=$(wait_for_log challenge-telemetry "$START_MS" '"schema_mutation_gate_challenge_total" "issued"') || {
   echo "FAIL: challenge telemetry did not arrive" >&2; exit 1;
 }
-ACCEPTED=$(wait_for_log "$START_MS" '"schema_mutation_gate_enforce_total" "status" "ok"') || {
+ACCEPTED=$(wait_for_log acceptance-telemetry "$START_MS" '"schema_mutation_gate_enforce_total" "status" "ok"') || {
   echo "FAIL: enforcement telemetry did not arrive" >&2; exit 1;
 }
 INITIAL_REJECTION=$(wait_for_initial_rejection "$START_MS") || {
@@ -142,15 +175,24 @@ QUOTA_REJECTS=0
 QUOTA_REPORT=null
 if [ "$QUOTA_PROBE" -eq 1 ]; then
   QUOTA_START_MS="$(date +%s)000"
-  QUOTA_REPORT=$(cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
-    -p schema_service_client --example schema_pow_live_probe -- \
-    --url "$API_URL" --environment dev --run-id "quota-${START_EPOCH}" \
-    --quota-attempts "$MAX_QUOTA_ATTEMPTS")
+  : > "$PROBE_STDOUT"
+  : > "$PROBE_STDERR"
+  python3 "$BOUNDED_COMMAND" \
+    --phase quota-client-proof \
+    --timeout-seconds "$QUOTA_PROBE_TIMEOUT_SECONDS" \
+    --progress-seconds "$PROBE_PROGRESS_SECONDS" \
+    --stdout-file "$PROBE_STDOUT" \
+    --stderr-file "$PROBE_STDERR" \
+    -- cargo run --quiet --manifest-path "$ROOT/fold/Cargo.toml" \
+      -p schema_service_client --example schema_pow_live_probe -- \
+      --url "$API_URL" --environment dev --run-id "quota-${START_EPOCH}" \
+      --quota-attempts "$MAX_QUOTA_ATTEMPTS"
+  QUOTA_REPORT=$(cat "$PROBE_STDOUT")
   echo "$QUOTA_REPORT" | jq -e \
     '.status == "PASS" and .quota_probe == true and .rejection == "quota_exceeded" and .private_key_persisted == false' \
     >/dev/null
   QUOTA_ATTEMPTS=$(echo "$QUOTA_REPORT" | jq -r '.attempts')
-  QUOTA_REJECTS=$(wait_for_log "$QUOTA_START_MS" '"schema_mutation_gate_enforce_total" "quota_exceeded"' || true)
+  QUOTA_REJECTS=$(wait_for_log quota-rejection-telemetry "$QUOTA_START_MS" '"schema_mutation_gate_enforce_total" "quota_exceeded"' || true)
   [ "$QUOTA_REJECTS" -gt 0 ] || {
     echo "FAIL: quota client passed but quota_exceeded telemetry did not arrive" >&2
     exit 1
