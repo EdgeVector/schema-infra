@@ -28,7 +28,41 @@ RUNNER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNNER_HEAD="$(git -C "$RUNNER_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "deploy-run: repo=$REPO context=$CONTEXT ref=$REF timeout_ms=$TIMEOUT_MS logs=$LOG_DIR runner_root=$RUNNER_ROOT runner_head=$RUNNER_HEAD"
 WATCH_PID=""
-stop() { [ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null || true; }
+CARGO_GUARD_PID=""
+
+# Older accepted schema-infra commits predate the repository-level
+# CARGO_BUILD_JOBS=1 mitigation. They still have to pass their original staged
+# deploy, but parallel rustc spawning under Docker Desktop's x86 QEMU can
+# deadlock before the fixed commit reaches the head of this serialized queue.
+# Install the equivalent Cargo setting in each ephemeral scratch CARGO_HOME.
+# This changes build scheduling only; it does not modify the checked-out source
+# or bypass any deploy/smoke/canary stage. Existing Cargo config is preserved.
+install_legacy_cargo_guard() {
+  local scratch cargo_home tmp
+  shopt -s nullglob
+  for scratch in "$LOG_DIR"/scratch/schema-infra-*; do
+    cargo_home="$scratch/.docker-cache/cargo"
+    mkdir -p "$cargo_home"
+    if [ ! -e "$cargo_home/config.toml" ]; then
+      tmp="$cargo_home/config.toml.tmp.$$"
+      printf '[build]\njobs = 1\n' >"$tmp"
+      mv "$tmp" "$cargo_home/config.toml"
+    fi
+  done
+}
+start_cargo_guard() {
+  (
+    while true; do
+      install_legacy_cargo_guard
+      sleep 1
+    done
+  ) &
+  CARGO_GUARD_PID=$!
+}
+stop() {
+  [ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null || true
+  [ -n "$CARGO_GUARD_PID" ] && kill "$CARGO_GUARD_PID" 2>/dev/null || true
+}
 trap 'stop; exit 0' INT TERM
 start_watch() {
   lastgit ci watch --repo "$REPO" --context "$CONTEXT" --ref "$REF" \
@@ -37,6 +71,8 @@ start_watch() {
     >>"$LOG_DIR/deploy.log" 2>&1 &
   WATCH_PID=$!
 }
+install_legacy_cargo_guard
+start_cargo_guard
 start_watch
 echo "pid=$WATCH_PID"
 while true; do
