@@ -3,6 +3,8 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=scripts/deploy/telemetry.sh
+source "$SCRIPT_DIR/scripts/deploy/telemetry.sh"
 ENVIRONMENT="${1:-dev}"
 
 # Parse flags (after the first positional arg)
@@ -65,7 +67,9 @@ export AWS_DEFAULT_REGION="$REGION"
 # Build Lambda (submodule-backed; see build.sh header)
 if [ "$SKIP_BUILD" = false ]; then
     echo "Building Lambda (profile: $BUILD_PROFILE)..."
+    stage_started="$(schema_telemetry_stage_start build)"
     "$SCRIPT_DIR/build.sh" "$BUILD_PROFILE"
+    schema_telemetry_stage_end build "$stage_started"
 else
     ZIP_PATH="$SCRIPT_DIR/fold/target/lambda/server_lambda/bootstrap.zip"
     EXTRACTED_DIR="$SCRIPT_DIR/fold/target/lambda/server_lambda-extracted"
@@ -81,6 +85,7 @@ fi
 if [ "$SKIP_INFRA" = false ]; then
     echo ""
     echo "Deploying CDK stack..."
+    stage_started="$(schema_telemetry_stage_start cdk_deploy_$ENVIRONMENT)"
     cd "$SCRIPT_DIR/cdk"
 
     # Install dependencies if needed
@@ -95,6 +100,7 @@ if [ "$SKIP_INFRA" = false ]; then
         --context environment="$ENVIRONMENT" \
         --require-approval never \
         --outputs-file outputs.json
+    schema_telemetry_stage_end "cdk_deploy_$ENVIRONMENT" "$stage_started"
 
     echo ""
     echo "=== Deployment Complete ==="
