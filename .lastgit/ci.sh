@@ -13,7 +13,8 @@ fi
 
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
-for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh; do
+for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
+  scripts/proof/*/*.sh tests/proof/*/*.sh; do
   [ -e "$f" ] || continue
   echo "bash -n $f"
   bash -n "$f"
@@ -22,6 +23,8 @@ echo "== canary helper tests =="
 bash scripts/deploy/test-canary-weight-pin.sh
 bash scripts/deploy/test-canary-alarm-gate.sh
 bash scripts/deploy/test-prove-mutation-gate.sh
+echo "== terminal proof harness =="
+bash tests/proof/schema-lambda-fast-deployment/test-prove.sh
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

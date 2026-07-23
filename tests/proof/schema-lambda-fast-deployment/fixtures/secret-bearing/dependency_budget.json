@@ -1,0 +1,28 @@
+{
+  "normal_package_count": 380,
+  "bootstrap_zip_size_bytes": 14000000,
+  "banned_packages_present": [],
+  "banned_packages_checked": [
+    "actix-web",
+    "actix-http",
+    "actix-codec",
+    "actix-server",
+    "actix-rt",
+    "actix-service",
+    "actix-utils",
+    "actix-router",
+    "actix-macros",
+    "actix-web-codegen",
+    "actix-tls",
+    "actix-ws",
+    "compress-io",
+    "image",
+    "jpeg-decoder",
+    "png",
+    "gif",
+    "tiff",
+    "sled",
+    "reqwest"
+  ],
+  "embeddings_source": "pinned_opt_layer_network_denied"
+}
