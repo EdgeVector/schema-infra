@@ -97,6 +97,26 @@ dev-only run that stops on the first server-side quota rejection. Production
 requires both `--environment prod` and `--allow-prod`; the quota probe is
 refused in production. Output is a single secret-safe JSON report.
 
+### Schema Lambda fast-deployment terminal proof
+
+North Star terminal report for `north-star-schema-lambda-fast-deployment`.
+Fail closed without redacted evidence; first line of
+`proofs/schema-lambda-fast-deployment.md` is `PASS` only when all criteria
+hold (ten-release timings, digests, dependency budget, path classification,
+coalescing, smoke/canary/alarms, rollback). No raw secrets in evidence or
+report.
+
+```bash
+# Operator (against a collected redacted evidence pack):
+scripts/proof/schema-lambda-fast-deployment/prove.sh \
+  --evidence-dir /path/to/redacted-evidence
+
+# Harness self-check (CI; fixtures only — not live production PASS):
+tests/proof/schema-lambda-fast-deployment/test-prove.sh
+```
+
+Details: [`scripts/proof/schema-lambda-fast-deployment/README.md`](scripts/proof/schema-lambda-fast-deployment/README.md).
+
 ### Custom Domain
 
 To enable the `schema.folddb.com` custom domain:

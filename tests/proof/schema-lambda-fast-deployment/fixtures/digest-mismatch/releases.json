@@ -1,0 +1,182 @@
+[
+  {
+    "id": "r01",
+    "fold_oid_short": "fold00000001",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "manifest_digest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "dev_code_sha256": "BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr=",
+    "prod_code_sha256": "BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 128,
+      "artifact_ready_to_prod_canary": 315,
+      "merge_to_dev_live": 500
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r02",
+    "fold_oid_short": "fold00000002",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+    "manifest_digest_sha256": "3434343434343434343434343434343434343434343434343434343434343434",
+    "dev_code_sha256": "CDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs=",
+    "prod_code_sha256": "CDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 136,
+      "artifact_ready_to_prod_canary": 330,
+      "merge_to_dev_live": 520
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r03",
+    "fold_oid_short": "fold00000003",
+    "kind": "code-only",
+    "cache": "cold",
+    "artifact_digest_sha256": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+    "manifest_digest_sha256": "3535353535353535353535353535353535353535353535353535353535353535",
+    "dev_code_sha256": "DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst=",
+    "prod_code_sha256": "DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 144,
+      "artifact_ready_to_prod_canary": 345,
+      "merge_to_dev_live": 1100
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r04",
+    "fold_oid_short": "fold00000004",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+    "manifest_digest_sha256": "3636363636363636363636363636363636363636363636363636363636363636",
+    "dev_code_sha256": "EFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu=",
+    "prod_code_sha256": "EFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 152,
+      "artifact_ready_to_prod_canary": 360,
+      "merge_to_dev_live": 560
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r05",
+    "fold_oid_short": "fold00000005",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "manifest_digest_sha256": "3737373737373737373737373737373737373737373737373737373737373737",
+    "dev_code_sha256": "FGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv=",
+    "prod_code_sha256": "jklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMN=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 160,
+      "artifact_ready_to_prod_canary": 375,
+      "merge_to_dev_live": 580
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r06",
+    "fold_oid_short": "fold00000006",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "1010101010101010101010101010101010101010101010101010101010101010",
+    "manifest_digest_sha256": "3838383838383838383838383838383838383838383838383838383838383838",
+    "dev_code_sha256": "GHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw=",
+    "prod_code_sha256": "GHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 168,
+      "artifact_ready_to_prod_canary": 390,
+      "merge_to_dev_live": 600
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r07",
+    "fold_oid_short": "fold00000007",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "manifest_digest_sha256": "3939393939393939393939393939393939393939393939393939393939393939",
+    "dev_code_sha256": "HIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx=",
+    "prod_code_sha256": "HIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 176,
+      "artifact_ready_to_prod_canary": 405,
+      "merge_to_dev_live": 620
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r08",
+    "fold_oid_short": "fold00000008",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "1212121212121212121212121212121212121212121212121212121212121212",
+    "manifest_digest_sha256": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+    "dev_code_sha256": "IJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy=",
+    "prod_code_sha256": "IJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 184,
+      "artifact_ready_to_prod_canary": 420,
+      "merge_to_dev_live": 640
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r09",
+    "fold_oid_short": "fold00000009",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+    "manifest_digest_sha256": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+    "dev_code_sha256": "JKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz=",
+    "prod_code_sha256": "JKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 192,
+      "artifact_ready_to_prod_canary": 435,
+      "merge_to_dev_live": 660
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  },
+  {
+    "id": "r10",
+    "fold_oid_short": "fold0000000a",
+    "kind": "code-only",
+    "cache": "warm",
+    "artifact_digest_sha256": "1414141414141414141414141414141414141414141414141414141414141414",
+    "manifest_digest_sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "dev_code_sha256": "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0=",
+    "prod_code_sha256": "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0=",
+    "timings_sec": {
+      "artifact_ready_to_dev_live": 200,
+      "artifact_ready_to_prod_canary": 450,
+      "merge_to_dev_live": 680
+    },
+    "cdk_invoked": false,
+    "rust_compiled": false,
+    "builds_for_digest": 1
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "code_only": {
+    "invoked_cdk": false,
+    "compiled_rust": false,
+    "example_id": "r01"
+  },
+  "infrastructure": {
+    "invoked_cdk": true,
+    "compiled_rust": false,
+    "example_id": "infra-01"
+  },
+  "no_impact": {
+    "skipped_deploy": true,
+    "reason": "docs-only change on main",
+    "example_id": "docs-01"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "collected_at": "2026-07-22T12:00:00Z",
+  "source": "fixture",
+  "max_age_hours": 8760,
+  "note": "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+}

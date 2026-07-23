@@ -1,0 +1,76 @@
+{
+  "dev_prod_code_sha256_equal": true,
+  "code_sha256_matches_manifest_for_all_releases": true,
+  "per_release": [
+    {
+      "id": "r01",
+      "manifest_digest_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "dev_code_sha256": "BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr=",
+      "prod_code_sha256": "BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr=",
+      "matches": true
+    },
+    {
+      "id": "r02",
+      "manifest_digest_sha256": "3434343434343434343434343434343434343434343434343434343434343434",
+      "dev_code_sha256": "CDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs=",
+      "prod_code_sha256": "CDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs=",
+      "matches": true
+    },
+    {
+      "id": "r03",
+      "manifest_digest_sha256": "3535353535353535353535353535353535353535353535353535353535353535",
+      "dev_code_sha256": "DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst=",
+      "prod_code_sha256": "DEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst=",
+      "matches": true
+    },
+    {
+      "id": "r04",
+      "manifest_digest_sha256": "3636363636363636363636363636363636363636363636363636363636363636",
+      "dev_code_sha256": "EFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu=",
+      "prod_code_sha256": "EFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu=",
+      "matches": true
+    },
+    {
+      "id": "r05",
+      "manifest_digest_sha256": "3737373737373737373737373737373737373737373737373737373737373737",
+      "dev_code_sha256": "FGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv=",
+      "prod_code_sha256": "FGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv=",
+      "matches": true
+    },
+    {
+      "id": "r06",
+      "manifest_digest_sha256": "3838383838383838383838383838383838383838383838383838383838383838",
+      "dev_code_sha256": "GHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw=",
+      "prod_code_sha256": "GHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw=",
+      "matches": true
+    },
+    {
+      "id": "r07",
+      "manifest_digest_sha256": "3939393939393939393939393939393939393939393939393939393939393939",
+      "dev_code_sha256": "HIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx=",
+      "prod_code_sha256": "HIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx=",
+      "matches": true
+    },
+    {
+      "id": "r08",
+      "manifest_digest_sha256": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+      "dev_code_sha256": "IJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy=",
+      "prod_code_sha256": "IJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy=",
+      "matches": true
+    },
+    {
+      "id": "r09",
+      "manifest_digest_sha256": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+      "dev_code_sha256": "JKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz=",
+      "prod_code_sha256": "JKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz=",
+      "matches": true
+    },
+    {
+      "id": "r10",
+      "manifest_digest_sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+      "dev_code_sha256": "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0=",
+      "prod_code_sha256": "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0=",
+      "matches": true
+    }
+  ]
+}
