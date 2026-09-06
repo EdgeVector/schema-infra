@@ -4,7 +4,7 @@ Standalone infrastructure for the FoldDB Schema Service (`schema.folddb.com`).
 
 ## Repository Venue
 
-`schema-infra` is canonical in LastGit at `lastdb:///schema-infra`.
+`schema-infra` is canonical in LastGit at `http://localhost:3300/EdgeVector/schema-infra.git`.
 Change requests, CI, merges, and deploy gating happen through LastGit. GitHub
 `EdgeVector/schema-infra` is a public read-only mirror for browse and clone only;
 GitHub Actions are inert and disabled at the repository level.

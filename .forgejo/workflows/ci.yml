@@ -1,0 +1,62 @@
+# Forge CI for schema-infra on the local Forgejo forge, the gate of record since
+# 2026-09-06 (brain: decision-2026-09-06-all-repos-venue-forgejo-no-lastgit-default).
+#
+# ci-required runs the same .lastgit/ci.sh that gated LastGit change requests,
+# on the Mac host lane (macos-arm64), so the gate itself does not change with
+# the venue. Branch protection on main requires this context.
+#
+# Host-mode runners cannot use actions/checkout (the runner's URL patch points
+# the forge at host.docker.internal, which only resolves inside Docker jobs, and
+# fetching the action from code.forgejo.org took 8 minutes on 2026-09-05), so
+# every job clones from the forge ROOT_URL by hand.
+name: Forge CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci-required:
+    name: ci-required
+    runs-on: macos-arm64
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository (host runner)
+        env:
+          FORGE_TOKEN: ${{ secrets.FORGEJO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          server_url="${GITHUB_SERVER_URL%/}"
+          server_url="${server_url//host.docker.internal/localhost}"
+          repo_url="${server_url}/${GITHUB_REPOSITORY}.git"
+          git init -q .
+          git remote remove origin 2>/dev/null || true
+          git remote add origin "$repo_url"
+          if ! git -c http.extraHeader="Authorization: token $FORGE_TOKEN" fetch -q --no-tags origin "$GITHUB_SHA"; then
+            git -c http.extraHeader="Authorization: token $FORGE_TOKEN" fetch -q --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          fi
+          git checkout -q --detach "$GITHUB_SHA"
+          git reset -q --hard
+          git clean -ffdxq
+          echo "checked out $(git rev-parse --short HEAD) from $repo_url"
+
+      - name: Host toolchains on PATH
+        run: |
+          for d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.cargo/bin" /opt/homebrew/bin; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
+
+      # The runner forces color into every step; the LastGit watcher never did.
+      - name: Merge gate (.lastgit/ci.sh)
+        env:
+          NO_COLOR: "1"
+          FORCE_COLOR: "0"
+          LASTGIT_CI_CONTEXT: ci-required
+          LASTGIT_CI_REPO: schema-infra
+          LASTGIT_CI_OID: ${{ github.sha }}
+          LASTGIT_SOCKET: /Users/tomtang/.lastdb/data/folddb.sock
+          LASTGIT_SCHEMA_MAP: /Users/tomtang/.lastgit/schema-map.json
+        run: bash .lastgit/ci.sh

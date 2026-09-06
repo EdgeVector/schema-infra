@@ -1,12 +1,4 @@
-lastgit
-# PR/CR venue of record for EdgeVector/schema-infra.
-# Only the FIRST line is the venue; everything below is a comment.
-#
-# Current: `lastgit` — gate of record is LastGit on the code-node
-# socket (~/.lastgit/code/data/folddb.sock). CI + auto-merge:
-# com.edgevector.lastgit-forge-code (lastgit forge run --all).
-# Deploy: com.edgevector.lastgit-deploy-schema-infra.
-# Mirror: com.edgevector.lastgit-mirror-schema-infra → GitHub public.
-#
-# GitHub is a read-only public mirror (Actions inert). Do not open
-# GitHub PRs for merge; use `lastgit cr` against lastdb:///schema-infra.
+forgejo
+# Gate of record for EdgeVector/schema-infra: Forgejo (http://localhost:3300), Tom 2026-09-06.
+# The LastGit repo lastdb:///schema-infra is disabled: no CRs, no pushes. Workflow: sop-forge-pr-workflow.
+# Decision: decision-2026-09-06-all-repos-venue-forgejo-no-lastgit-default.
