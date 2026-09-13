@@ -54,12 +54,22 @@ FOLD_URL="${SCHEMA_BUILD_REMOTE_FOLD_URL:-http://100.109.94.59:3300/EdgeVector/f
 BUILD_TIMEOUT_S="${SCHEMA_BUILD_REMOTE_TIMEOUT_S:-5400}"
 PROFILE="${BUILD_PROFILE:-release}"
 
+# Token order: $FORGE_TOKEN, keychain item forgejo-token, then the Last Stack
+# resolver (lastsecrets://forgejo-token). The keychain alone failed the deploy
+# on 2026-09-13T21:37Z: the runner (.lastgit/deploy-run.sh) resolves its own
+# token through the Last Stack lib and hands git a GIT_CONFIG_* header, but
+# never exported FORGE_TOKEN, and this host has no keychain item any more.
 FORGE_TOKEN_VALUE="${FORGE_TOKEN:-}"
 if [ -z "$FORGE_TOKEN_VALUE" ] && command -v security >/dev/null 2>&1; then
     FORGE_TOKEN_VALUE="$(security find-generic-password -s forgejo-token -w 2>/dev/null || true)"
 fi
+if [ -z "$FORGE_TOKEN_VALUE" ] && [ -f "${LAST_STACK_ROOT:-$HOME/.last-stack}/lib/forge-token.sh" ]; then
+    # shellcheck disable=SC1091
+    . "${LAST_STACK_ROOT:-$HOME/.last-stack}/lib/forge-token.sh"
+    FORGE_TOKEN_VALUE="$(last_stack_forge_token 2>/dev/null || true)"
+fi
 if [ -z "$FORGE_TOKEN_VALUE" ]; then
-    echo "FAIL: no Forgejo token (set FORGE_TOKEN or keychain item forgejo-token)" >&2
+    echo "FAIL: no Forgejo token (set FORGE_TOKEN, keychain item forgejo-token, or lastsecrets://forgejo-token)" >&2
     exit 1
 fi
 
