@@ -45,6 +45,10 @@ if [ -z "$TOKEN" ]; then
 fi
 # Every child git (including the deploy script's own ls-remote against the
 # forge) authenticates through GIT_CONFIG_* — no per-call header plumbing.
+# Children that talk to the forge API or ship the token to the remote builder
+# (scripts/remote-native-build.sh) read FORGE_TOKEN; hand it down too, so the
+# deploy does not depend on a keychain item this host no longer has.
+export FORGE_TOKEN="$TOKEN"
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0="http.${FORGE_ROOT}/.extraHeader"
 export GIT_CONFIG_VALUE_0="Authorization: token ${TOKEN}"
