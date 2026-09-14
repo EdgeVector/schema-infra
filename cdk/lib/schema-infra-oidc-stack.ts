@@ -1,6 +1,12 @@
 import { Stack, StackProps, CfnOutput } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as iam from "aws-cdk-lib/aws-iam";
+import {
+  GITHUB_OIDC_AUDIENCE,
+  GITHUB_OIDC_AUD_CONDITION_KEY,
+  GITHUB_OIDC_ISSUER_URL,
+  GITHUB_OIDC_SUB_CONDITION_KEY,
+} from "./github-oidc";
 
 export interface SchemaInfraOidcStackProps extends StackProps {
   // Owner/repo string GitHub embeds in OIDC `sub` claims. e.g.
@@ -23,9 +29,11 @@ export class SchemaInfraOidcStack extends Stack {
   constructor(scope: Construct, id: string, props: SchemaInfraOidcStackProps) {
     super(scope, id, props);
 
+    // Issuer URL and audience live in ./github-oidc.ts, the same literals the
+    // trust-policy condition keys below are built from.
     const provider = new iam.OpenIdConnectProvider(this, "GitHubOidcProvider", {
-      url: "https://token.actions.githubusercontent.com",
-      clientIds: ["sts.amazonaws.com"],
+      url: GITHUB_OIDC_ISSUER_URL,
+      clientIds: [GITHUB_OIDC_AUDIENCE],
     });
 
     const account = Stack.of(this).account;
@@ -45,12 +53,12 @@ export class SchemaInfraOidcStack extends Stack {
     ): iam.Role => {
       const conditions: Record<string, Record<string, string>> = {
         StringEquals: {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          [GITHUB_OIDC_AUD_CONDITION_KEY]: GITHUB_OIDC_AUDIENCE,
         },
       };
       conditions[subCondition.test] = {
         ...(conditions[subCondition.test] ?? {}),
-        "token.actions.githubusercontent.com:sub": subCondition.value,
+        [GITHUB_OIDC_SUB_CONDITION_KEY]: subCondition.value,
       };
 
       const role = new iam.Role(this, roleId, {

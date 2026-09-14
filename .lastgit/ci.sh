@@ -38,5 +38,6 @@ case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac
 if [ -f cdk/package.json ]; then
   npm --prefix cdk ci --ignore-scripts
   npm --prefix cdk run build
+  npm --prefix cdk run test:github-oidc
 fi
 echo "lastgit ci gate PASSED"

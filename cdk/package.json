@@ -6,6 +6,7 @@
     },
     "scripts": {
         "build": "tsc",
+        "test:github-oidc": "ts-node test/github-oidc-synth.ts",
         "watch": "tsc -w",
         "cdk": "cdk",
         "deploy": "cdk deploy",
