@@ -2,10 +2,13 @@
 # Install launchd agent that runs canary-ticker every 15 minutes.
 #
 # Launchd points at a durable wrapper under LASTGIT_DEPLOY_LOG_DIR. That
-# wrapper refreshes ~/.lastgit/mirror-clones/schema-infra to canonical main
-# and refuses dirty/stale trees before exec'ing the clone's ticker. Do not
-# point launchd at the clone path itself — nothing kept that checkout in
-# sync (papercut-schema-infra-canary-ticker-stale-mirror-clone-time-only-gate).
+# wrapper refreshes the run-root to canonical main and refuses dirty/stale
+# trees before exec'ing its ticker. The preferred run-root is the forge-tracking
+# deploy checkout (~/.lastgit/deploy-checkouts/schema-infra), which
+# deploy-run.sh also keeps on main. Do not point launchd at a clone path
+# directly — nothing kept the old LastGit mirror clone in sync
+# (papercut-schema-infra-canary-ticker-stale-mirror-clone-time-only-gate).
+# A run-root whose origin is not the forge repo is refused.
 set -euo pipefail
 
 REPO_SLUG="schema-infra"
@@ -33,7 +36,7 @@ resolve_repo_root() {
   local c
   for c in \
     "${LASTGIT_CANARY_REPO_ROOT:-}" \
-    "$HOME/.lastgit/mirror-clones/${REPO_SLUG}" \
+    "$HOME/.lastgit/deploy-checkouts/${REPO_SLUG}" \
     "$INSTALLER_ROOT" \
     "$HOME/code/edgevector/${REPO_SLUG}"
   do
@@ -85,9 +88,18 @@ WRAP
 
 REPO_ROOT="$(resolve_repo_root)" || {
   echo "FAIL: no durable ${REPO_SLUG} root with .lastgit/canary-ticker.sh + scripts/deploy/canary-lib.sh" >&2
-  echo "  tried LASTGIT_CANARY_REPO_ROOT, ~/.lastgit/mirror-clones/${REPO_SLUG}, installer parent, ~/code/edgevector/${REPO_SLUG}" >&2
+  echo "  tried LASTGIT_CANARY_REPO_ROOT, ~/.lastgit/deploy-checkouts/${REPO_SLUG}, installer parent, ~/code/edgevector/${REPO_SLUG}" >&2
   exit 1
 }
+# An explicit LASTGIT_CANARY_REPO_ROOT is the operator's choice (tests pass a
+# local clone); only an auto-resolved root must track the forge.
+if [ -z "${LASTGIT_CANARY_REPO_ROOT:-}" ] && [ -d "$REPO_ROOT/.git" ]; then
+  origin="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+  case "$origin" in
+    *localhost:3300/EdgeVector/${REPO_SLUG}*|*127.0.0.1:3300/EdgeVector/${REPO_SLUG}*) ;;
+    *) echo "refusing: $REPO_ROOT origin is '$origin', not the forge repo (see header)" >&2; exit 2 ;;
+  esac
+fi
 
 case "$CMD" in
   install)
@@ -127,8 +139,11 @@ EOF
 
     if [ "${LASTGIT_CANARY_SKIP_LAUNCHCTL:-}" != "1" ]; then
       launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
-      launchctl bootstrap "$DOMAIN" "$PLIST"
+      # enable BEFORE bootstrap: a disabled label rejects bootstrap with an
+      # opaque "5: Input/output error". bootout is asynchronous; wait a moment.
       launchctl enable "${DOMAIN}/${LABEL}" 2>/dev/null || true
+      sleep 2
+      launchctl bootstrap "$DOMAIN" "$PLIST"
       launchctl kickstart -k "${DOMAIN}/${LABEL}" 2>/dev/null || true
     fi
 
