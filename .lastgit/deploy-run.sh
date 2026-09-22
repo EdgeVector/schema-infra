@@ -74,10 +74,21 @@ refresh_checkout() {
   have="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
   [ -n "$have" ] && [ "$have" != "$want" ] || return 0
   before="$(self_sum)"
+  # Serialize with the canary ticker wrapper, which fast-forwards the same
+  # checkout (scripts/deploy/checkout-lock.sh). A timed-out wait is logged and
+  # retried on the next tick, same as a failed pull.
+  # shellcheck source=scripts/deploy/checkout-lock.sh
+  [ -f "$ROOT/scripts/deploy/checkout-lock.sh" ] && source "$ROOT/scripts/deploy/checkout-lock.sh"
+  if command -v checkout_lock_acquire >/dev/null 2>&1 && ! checkout_lock_acquire "$ROOT" "${CHECKOUT_LOCK_WAIT_S:-60}" 2>>"$LOG"; then
+    log "deploy-run: checkout refresh skipped at $have (lock busy); see $LOG"
+    return 0
+  fi
   if ! timeout 120 git -C "$ROOT" pull -q --ff-only origin "${REF#refs/heads/}" >>"$LOG" 2>&1; then
+    command -v checkout_lock_release >/dev/null 2>&1 && checkout_lock_release "$ROOT"
     log "deploy-run: checkout refresh failed at $have (keeping it); see $LOG"
     return 0
   fi
+  command -v checkout_lock_release >/dev/null 2>&1 && checkout_lock_release "$ROOT"
   after="$(self_sum)"
   log "deploy-run: checkout $have -> $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
   if [ "$before" != "$after" ]; then

@@ -21,8 +21,10 @@ DOMAIN="gui/$(id -u)"
 CMD="${1:-install}"
 INSTALLER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER_SRC="${INSTALLER_ROOT}/scripts/deploy/canary-run-root.sh"
+LOCK_SRC="${INSTALLER_ROOT}/scripts/deploy/checkout-lock.sh"
 WRAPPER="${LOG_DIR}/canary-ticker-wrapper.sh"
 HELPER_DST="${LOG_DIR}/canary-run-root.sh"
+LOCK_DST="${LOG_DIR}/checkout-lock.sh"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$LAUNCH_AGENTS_DIR" 2>/dev/null || true
@@ -56,6 +58,7 @@ write_durable_wrapper() {
     return 1
   fi
   cp -f "$HELPER_SRC" "$HELPER_DST"
+  [ -f "$LOCK_SRC" ] && cp -f "$LOCK_SRC" "$LOCK_DST"
   cat > "$WRAPPER" <<WRAP
 #!/usr/bin/env bash
 # Durable canary ticker entrypoint. Refresh the run-root, then exec the
@@ -84,6 +87,7 @@ export CANARY_RUN_ROOT_REFRESHED=1
 exec /bin/bash "\$LASTGIT_CANARY_REPO_ROOT/.lastgit/canary-ticker.sh"
 WRAP
   chmod +x "$WRAPPER" "$HELPER_DST"
+  [ -f "$LOCK_DST" ] && chmod +x "$LOCK_DST"
 }
 
 REPO_ROOT="$(resolve_repo_root)" || {
