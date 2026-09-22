@@ -70,6 +70,24 @@ canary_assert_run_root_fresh() {
 }
 
 canary_refresh_run_root() {
+  # Serialized with the deploy watcher, which fast-forwards the same checkout.
+  local root="${1:?canary_refresh_run_root requires a checkout path}"
+  # The lock lib lives in the checkout being refreshed; the durable wrapper
+  # sources a COPY of this file from LOG_DIR, so look in the run-root first,
+  # then beside this file (the installer copies the lib there too).
+  local lib
+  for lib in "$root/scripts/deploy/checkout-lock.sh" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/checkout-lock.sh"; do
+    # shellcheck source=scripts/deploy/checkout-lock.sh
+    if [ -f "$lib" ]; then source "$lib"; break; fi
+  done
+  if command -v with_checkout_lock >/dev/null 2>&1; then
+    with_checkout_lock "$root" "${CHECKOUT_LOCK_WAIT_S:-60}" canary_refresh_run_root_unlocked "$root"
+  else
+    canary_refresh_run_root_unlocked "$root"
+  fi
+}
+
+canary_refresh_run_root_unlocked() {
   local root="${1:?canary_refresh_run_root requires a checkout path}"
   local remote main_ref want have
   if [ ! -d "$root/.git" ] && [ ! -f "$root/.git" ]; then
