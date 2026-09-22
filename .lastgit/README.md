@@ -24,10 +24,12 @@ daily-driver CR, CI, or deploy status. Deploy launchd jobs pin
 `LASTGIT_SOCKET` in `.lastgit/deploy-run.sh` so `deploy-pipeline` status is
 published to the same primary Mini node as CR merge state.
 
-Deploy launchd must point at a durable checkout, normally
-`$HOME/.lastgit/mirror-clones/schema-infra`, not a one-shot ship checkout. Run
-`.lastgit/install-deploy-launchd.sh install` after deploy runner changes so the
-LaunchAgent cannot keep supervising a deleted or stale checkout.
+Deploy launchd must point at a durable, forge-tracking checkout, normally
+`$HOME/.lastgit/deploy-checkouts/schema-infra`, not a one-shot ship checkout.
+`deploy-run.sh` keeps that checkout fast-forwarded to forge `main` and re-execs
+itself when it changes, so a merged runner fix takes effect on its own. Run
+`.lastgit/install-deploy-launchd.sh install` from that checkout once per machine
+(the installer refuses a root whose `origin` is not the forge repo).
 
 Canary ticker launchd follows the same durable-checkout rule. Run
 `.lastgit/install-canary-ticker-launchd.sh install` after canary runner changes,

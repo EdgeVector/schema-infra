@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
-# Install the durable LastGit deploy-pipeline supervisor for schema-infra.
+# Install the durable deploy-pipeline supervisor for schema-infra (forge main).
+#
+# The plist points at .lastgit/deploy-run.sh inside a forge-tracking checkout:
+# ~/.lastgit/deploy-checkouts/schema-infra when it exists, else this installer's
+# own repo root; LASTGIT_DEPLOY_REPO_ROOT overrides. deploy-run.sh keeps that
+# checkout fast-forwarded to main and re-execs itself when it changes. Until
+# 2026-09-21 this copied the runner into LOG_DIR, where nothing refreshed it.
+# A root whose origin is not the forge repo is refused.
 set -euo pipefail
 
 REPO_SLUG="schema-infra"
 LABEL="com.edgevector.lastgit-deploy-${REPO_SLUG}"
 LOG_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-${REPO_SLUG}}"
-RUNNER="${LOG_DIR}/deploy-run.sh"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SOURCE="${ROOT}/.lastgit/deploy-run.sh"
+INSTALLER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="${LASTGIT_DEPLOY_REPO_ROOT:-}"
+if [ -z "$ROOT" ]; then
+  if [ -x "$HOME/.lastgit/deploy-checkouts/${REPO_SLUG}/.lastgit/deploy-run.sh" ]; then
+    ROOT="$HOME/.lastgit/deploy-checkouts/${REPO_SLUG}"
+  else
+    ROOT="$INSTALLER_ROOT"
+  fi
+fi
+RUNNER="${ROOT}/.lastgit/deploy-run.sh"
+SOURCE="$RUNNER"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 DEFAULT_PLIST="${LAUNCH_AGENTS_DIR}/${LABEL}.plist"
 PLIST="${LASTGIT_DEPLOY_PLIST:-$DEFAULT_PLIST}"
@@ -29,7 +44,15 @@ mkdir -p "$(dirname "$PLIST")"
 
 case "$CMD" in
   install)
-    cp -f "$SOURCE" "$RUNNER"
+    # An explicit LASTGIT_DEPLOY_REPO_ROOT is the operator's choice; only an
+    # auto-resolved root must track the forge.
+    if [ -z "${LASTGIT_DEPLOY_REPO_ROOT:-}" ]; then
+      origin="$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)"
+      case "$origin" in
+        *localhost:3300/EdgeVector/${REPO_SLUG}*|*127.0.0.1:3300/EdgeVector/${REPO_SLUG}*) ;;
+        *) echo "refusing: $ROOT origin is '$origin', not the forge repo (see header)" >&2; exit 2 ;;
+      esac
+    fi
     chmod +x "$RUNNER"
 
     cat > "$PLIST" <<EOF
@@ -64,8 +87,13 @@ case "$CMD" in
 EOF
 
     launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
-    launchctl bootstrap "$DOMAIN" "$PLIST"
+    # A label left disabled by an earlier `launchctl disable` rejects bootstrap
+    # with an opaque "5: Input/output error" (this one sat disabled from
+    # 2026-09-14 to 2026-09-21); enable BEFORE bootstrap. bootout is
+    # asynchronous, so give the old instance a moment.
     launchctl enable "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    sleep 2
+    launchctl bootstrap "$DOMAIN" "$PLIST"
     launchctl kickstart -k "${DOMAIN}/${LABEL}" 2>/dev/null || true
 
     echo "installed ${LABEL} -> ${RUNNER}"

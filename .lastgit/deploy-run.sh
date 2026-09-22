@@ -12,7 +12,16 @@
 #
 # Deliberately NOT a Forge CI job: Forgejo cancels an in-progress push run when
 # the next merge lands, and a production deploy must never be cut off mid-flight.
+#
+# The LaunchAgent runs this file from a forge-tracking checkout of the repo
+# (install-deploy-launchd.sh points the plist at it). Whenever forge main moves
+# past that checkout, the loop fast-forwards the checkout and, if this file's
+# bytes changed, re-execs itself so a merged fix to the watcher takes effect
+# without a hand copy. Same shape as fold_db_website #8 / exemem-infra #477.
 set -euo pipefail
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ORIG_ARGS=("$@")
 REPO="${1:-schema-infra}"
 CONTEXT="${LASTGIT_DEPLOY_CONTEXT:-deploy-pipeline}"
 SCRIPT="${LASTGIT_DEPLOY_SCRIPT:-.lastgit/deploy-pipeline.sh}"
@@ -55,10 +64,33 @@ export GIT_CONFIG_VALUE_0="Authorization: token ${TOKEN}"
 export LASTGIT_DEPLOY_TIP_URL="${LASTGIT_DEPLOY_TIP_URL:-${FORGE_ROOT}/${FORGE_OWNER}/${REPO}.git}"
 api() { curl -sS --max-time 30 -H "Authorization: token $TOKEN" -H "Accept: application/json" "$@"; }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
-log "deploy-run: repo=$REPO context=$CONTEXT venue=forgejo ref=$REF script=$SCRIPT logs=$LOG_DIR poll=${POLL_S}s"
+self_sum() { shasum -a 256 "$SELF" 2>/dev/null | awk '{print $1}'; }
+# Fast-forward the checkout this script runs from to the forge tip. git replaces
+# files by rename, so the running bash keeps its old inode; re-exec picks up the
+# new bytes. Skipped when ROOT is not a git checkout (ad-hoc runs).
+refresh_checkout() {
+  local want="$1" have before after
+  [ -d "$ROOT/.git" ] || return 0
+  have="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+  [ -n "$have" ] && [ "$have" != "$want" ] || return 0
+  before="$(self_sum)"
+  if ! timeout 120 git -C "$ROOT" pull -q --ff-only origin "${REF#refs/heads/}" >>"$LOG" 2>&1; then
+    log "deploy-run: checkout refresh failed at $have (keeping it); see $LOG"
+    return 0
+  fi
+  after="$(self_sum)"
+  log "deploy-run: checkout $have -> $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
+  if [ "$before" != "$after" ]; then
+    log "deploy-run: script changed; re-exec $SELF"
+    exec "$SELF" "${ORIG_ARGS[@]}"
+  fi
+}
+
+log "deploy-run: repo=$REPO context=$CONTEXT venue=forgejo ref=$REF script=$SCRIPT root=$ROOT logs=$LOG_DIR poll=${POLL_S}s"
 trap 'log "deploy-run: stopping"; exit 0' INT TERM
 while true; do
   tip="$(timeout 60 git ls-remote "${FORGE_ROOT}/${FORGE_OWNER}/${REPO}.git" "$REF" 2>>"$LOG" | awk '{print $1}' | head -1 || true)"
+  [ -n "$tip" ] && refresh_checkout "$tip"
   last="$(cat "$STATE" 2>/dev/null || true)"
   if [ -n "$tip" ] && [ "$tip" != "$last" ]; then
     state="$(api "${FORGE_ROOT}/api/v1/repos/${FORGE_OWNER}/${REPO}/commits/${tip}/status" 2>>"$LOG" | jq -r '.state // empty' 2>/dev/null || true)"
