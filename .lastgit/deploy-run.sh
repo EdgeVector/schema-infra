@@ -108,9 +108,13 @@ while true; do
       printf '%s\n' "$tip" > "$STATE"
       st=failure; [ "$rc" -eq 0 ] && st=success
       log "deploy $st oid=$tip rc=$rc"
-      api -X POST -H 'Content-Type: application/json' \
+      # Forgejo's create-status endpoint is /statuses/{sha}; the GitHub-shaped
+      # /commits/{sha}/statuses answers 405 here. Keep the HTTP code visible so a
+      # rejected post-back lands in the log instead of vanishing.
+      code="$(api -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
         -d "{\"state\":\"$st\",\"context\":\"$CONTEXT\",\"description\":\"$CONTEXT rc=$rc (forge deploy watcher)\",\"target_url\":\"\"}" \
-        "${FORGE_ROOT}/api/v1/repos/${FORGE_OWNER}/${REPO}/commits/${tip}/statuses" >/dev/null 2>>"$LOG" || true
+        "${FORGE_ROOT}/api/v1/repos/${FORGE_OWNER}/${REPO}/statuses/${tip}" 2>>"$LOG" || true)"
+      case "$code" in 2*) ;; *) log "deploy status post-back failed http=$code oid=$tip context=$CONTEXT" ;; esac
       rm -rf "$scratch"
     elif [ -n "$state" ] && [ "$state" != "pending" ]; then
       log "tip $tip has Forge CI state=$state; not deploying"
