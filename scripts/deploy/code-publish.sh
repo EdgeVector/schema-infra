@@ -87,13 +87,25 @@ if [ "$ENV_NAME" = "dev" ]; then
         --routing-config '{}' >/dev/null
     canary_log "code-publish(dev): live → $NEW_VER (100%)"
 else
-    if ! set_canary_weights "$FN" "$REGION" "${OLD_VER:-}" "$NEW_VER"; then
+    PIN_RC=0
+    set_canary_weights "$FN" "$REGION" "${OLD_VER:-}" "$NEW_VER" || PIN_RC=$?
+    if [ "$PIN_RC" -eq 0 ]; then
+        CANARY_PIN=pinned
+    elif [ "$PIN_RC" -eq 2 ]; then
+        # Fail closed: the version live serves now is gone. Do not move the
+        # alias onto unsoaked code and do not pick an older version.
+        CANARY_PIN=refused
+        canary_alert "code-publish(prod): canary REFUSED — pre-publish live version ${OLD_VER} is missing; live alias untouched; new version $NEW_VER not routed"
+        echo "CANARY_PIN=$CANARY_PIN"
+        exit 1
+    else
         # No prior version to weight — put live fully on the new version,
         # same behavior as the CDK path's no-pin case.
         aws lambda update-alias --function-name "$FN" --name live \
             --function-version "$NEW_VER" \
             --routing-config '{}' >/dev/null
         canary_log "code-publish(prod): no weighted pin — live → $NEW_VER (100%)"
+        CANARY_PIN=none
     fi
 fi
 
@@ -108,4 +120,5 @@ schema_telemetry_emit code_publish \
     "rust_compiled=false"
 
 echo "NEW_VERSION=$NEW_VER"
+echo "CANARY_PIN=${CANARY_PIN:-none}"
 echo "CODE_SHA256=$GOT_SHA"

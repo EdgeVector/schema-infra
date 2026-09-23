@@ -23,6 +23,10 @@ if [ "${1:-}" = "lambda" ] && [ "${2:-}" = "get-alias" ]; then
   echo "42"
   exit 0
 fi
+if [ "${1:-}" = "lambda" ] && [ "${2:-}" = "get-function" ] && [ -n "${MOCK_MISSING_VERSION:-}" ]; then
+  # --function-name FN:VER → fail for the version the test deleted
+  case "$*" in *":${MOCK_MISSING_VERSION} "*|*":${MOCK_MISSING_VERSION}") echo "ResourceNotFoundException" >&2; exit 254 ;; esac
+fi
 if [ "${1:-}" = "lambda" ] && [ "${2:-}" = "update-alias" ]; then
   # record routing config arg for assertion
   printf '%s\n' "$@" >"${MOCK_AWS_UPDATE:-/dev/null}"
@@ -82,5 +86,48 @@ if [ -s "$MOCK_AWS_UPDATE" ]; then
   echo "expected no update-alias when old==new" >&2
   cat "$MOCK_AWS_UPDATE" >&2
   exit 1
+fi
+# Fail closed (2026-09-23 incident): the pre-deploy live version is gone.
+# The helper must return 2, never touch the alias, and never go looking for
+# another ("fallback") primary among the remaining versions.
+if declare -f set_canary_weights >/dev/null && ! declare -f set_canary_weights_one >/dev/null; then
+  : >"$MOCK_AWS_UPDATE"
+  : >"$MOCK_AWS_LOG"
+  rc=0
+  MOCK_MISSING_VERSION=32 set_canary_weights "SchemaFn" "us-east-1" "32" "33" || rc=$?
+  if [ "$rc" -ne 2 ]; then
+    echo "expected rc=2 (refused) when old version is missing, got rc=$rc" >&2
+    exit 1
+  fi
+  if [ -s "$MOCK_AWS_UPDATE" ]; then
+    echo "update-alias must not run when old version is missing:" >&2
+    cat "$MOCK_AWS_UPDATE" >&2
+    exit 1
+  fi
+  if grep -q 'list-versions-by-function' "$MOCK_AWS_LOG"; then
+    echo "must not search for a fallback primary version" >&2
+    exit 1
+  fi
+  if grep -q 'provisioned-concurrency' "$MOCK_AWS_LOG"; then
+    echo "must not mutate provisioned concurrency when refusing" >&2
+    exit 1
+  fi
+  grep -q 'REFUSED' "$LASTGIT_DEPLOY_LOG_DIR/canary.log" || {
+    echo "expected a REFUSED line in canary.log" >&2; exit 1; }
+
+  # Ticker rollback to a deleted version must not call update-alias.
+  : >"$MOCK_AWS_UPDATE"
+  rc=0
+  SCHEMA_CANARY_ALERT_NOTICE=0 MOCK_MISSING_VERSION=32 rollback_canary "SchemaFn" "us-east-1" "32" 2>/dev/null || rc=$?
+  if [ "$rc" -ne 1 ] || [ -s "$MOCK_AWS_UPDATE" ]; then
+    echo "rollback to a missing version must fail without update-alias (rc=$rc)" >&2
+    exit 1
+  fi
+
+  # Present old version still pins primary=OLD exactly (not any other).
+  : >"$MOCK_AWS_UPDATE"
+  MOCK_MISSING_VERSION=31 set_canary_weights "SchemaFn" "us-east-1" "32" "33"
+  grep -qx '32' "$MOCK_AWS_UPDATE" || { echo "primary must be the pre-deploy version 32:" >&2; cat "$MOCK_AWS_UPDATE" >&2; exit 1; }
+  grep -q 'AdditionalVersionWeights={33=0.1}' "$MOCK_AWS_UPDATE" || { echo "canary must be 33 at 0.1" >&2; exit 1; }
 fi
 echo "ok canary-weight-pin $(basename "$ROOT")"

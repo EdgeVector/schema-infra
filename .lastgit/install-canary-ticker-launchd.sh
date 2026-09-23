@@ -110,6 +110,7 @@ case "$CMD" in
     write_durable_wrapper "$REPO_ROOT"
     # shellcheck source=/dev/null
     source "$HELPER_DST"
+    canary_register_forge_credential_helper "$REPO_ROOT"
     canary_refresh_run_root "$REPO_ROOT"
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

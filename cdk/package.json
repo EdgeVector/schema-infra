@@ -10,7 +10,8 @@
         "watch": "tsc -w",
         "cdk": "cdk",
         "deploy": "cdk deploy",
-        "synth": "cdk synth"
+        "synth": "cdk synth",
+        "test:version-retain": "ts-node test/version-retain-synth.ts"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",

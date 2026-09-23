@@ -32,13 +32,52 @@ canary_run_root_remote() {
   return 1
 }
 
+# Forge credentials for unattended fetches. The inherited osxkeychain helper
+# fails under launchd once the login keychain locks (-25293), and git then
+# prompts for a username and the ticker goes blind
+# (papercut-schema-infra-canary-ticker-fetch-fails-keychain-since-20260923).
+# The last-stack forge helper reads the token without the keychain.
+CANARY_FORGE_ROOT="${FORGE_ROOT:-http://localhost:3300}"
+# Literal $HOME: git runs a "!" helper through the shell, so the value stays
+# valid for the user that owns the checkout.
+# shellcheck disable=SC2016
+CANARY_FORGE_HELPER_VALUE='!"$HOME/.last-stack/bin/git-credential-last-stack-forge"'
+
+canary_forge_helper_present() {
+  [ -x "${HOME}/.last-stack/bin/git-credential-last-stack-forge" ]
+}
+
+# Register the forge helper in the checkout's own .git/config: an empty entry
+# resets the inherited helper chain (osxkeychain), then the forge helper.
+# Idempotent. Called by both launchd installers.
+canary_register_forge_credential_helper() {
+  local root="${1:?canary_register_forge_credential_helper requires a checkout path}"
+  local key="credential.${CANARY_FORGE_ROOT}.helper"
+  if ! canary_forge_helper_present; then
+    echo "WARN: ~/.last-stack/bin/git-credential-last-stack-forge missing; forge fetches in $root use the inherited helper" >&2
+    return 0
+  fi
+  git -C "$root" config --unset-all "$key" 2>/dev/null || true
+  git -C "$root" config --add "$key" ""
+  git -C "$root" config --add "$key" "$CANARY_FORGE_HELPER_VALUE"
+}
+
 canary_run_root_fetch() {
   local root="$1" remote="$2"
   local spec="+refs/heads/main:refs/remotes/${remote}/main"
   if [ "${CANARY_SKIP_FETCH:-}" = "1" ]; then
     return 0
   fi
-  GIT_TERMINAL_PROMPT=0 git -C "$root" fetch --quiet "$remote" "$spec"
+  if canary_forge_helper_present; then
+    # Same reset + helper on the command line, so a checkout whose config
+    # lost the entry (re-clone, hand edit) still fetches without a keychain.
+    GIT_TERMINAL_PROMPT=0 git -C "$root" \
+      -c "credential.${CANARY_FORGE_ROOT}.helper=" \
+      -c "credential.${CANARY_FORGE_ROOT}.helper=${CANARY_FORGE_HELPER_VALUE}" \
+      fetch --quiet "$remote" "$spec"
+  else
+    GIT_TERMINAL_PROMPT=0 git -C "$root" fetch --quiet "$remote" "$spec"
+  fi
 }
 
 canary_assert_run_root_fresh() {

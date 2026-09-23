@@ -12,6 +12,22 @@
    - If soak elapsed and alarms OK → promote to **100%**
    - If alarms ALARM anytime → **rollback** to previous version
 
+## Previous version: retained, never substituted
+
+- CDK keeps every Lambda version (`currentVersionOptions.removalPolicy =
+  RETAIN` on the function). Before 2026-09-23 CloudFormation deleted the
+  version the old template owned at the end of each deploy, which removed the
+  pre-deploy live version.
+- The canary primary is always the version that `live` served before the
+  deploy. If that version is gone, `set_canary_weights` returns 2 and does
+  not touch the alias (fail closed): live stays 100% on the new version, no
+  soak state is written, a `canary_refused` telemetry row and a Situations
+  notice are emitted, and the pipeline exits non-zero. It never picks another
+  (older) version. Exception: when the new version has the same CodeSha256 as
+  the deleted one, nothing changed, so the pipeline logs it and passes.
+- The first deploy after the RETAIN change still deletes the version that the
+  previous template owned (CloudFormation applies the old DeletionPolicy).
+
 ## “One box”
 
 Lambda is multi-tenant. **10% weighted alias traffic** is the serverless stand-in for a single canary box. Override with `CANARY_WEIGHT=0.05` etc.
