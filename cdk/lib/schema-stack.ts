@@ -296,6 +296,22 @@ exports.handler = async (event) => {
         "../fold/target/lambda/server_lambda-extracted",
       ),
       layers: [fastembedLayer],
+      // Keep every published version when CDK replaces `currentVersion`.
+      // Without this, CloudFormation deletes the previous version at the
+      // end of each deploy (the default DeletionPolicy for
+      // AWS::Lambda::Version is Delete). That deleted the pre-deploy live
+      // version (prod v32, 2026-09-23), so the canary pin had no rollback
+      // target. The canary (scripts/deploy/canary-lib.sh) weights the new
+      // version against the pre-deploy live version, and that version
+      // must still exist after CDK runs.
+      //
+      // CAUTION: CloudFormation applies the DeletionPolicy of the template
+      // that is live when a resource leaves the stack. The first deploy
+      // of this change still deletes the version that the previous template
+      // owned; every later deploy retains it.
+      currentVersionOptions: {
+        removalPolicy: RemovalPolicy.RETAIN,
+      },
       // First cold start on an empty bucket seeds built-in schemas and
       // RMW-persists domain blobs. Once populated, later cold starts
       // load blobs (< 1s); warm invocations complete in milliseconds.

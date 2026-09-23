@@ -40,5 +40,6 @@ if [ -f cdk/package.json ]; then
   npm --prefix cdk ci --ignore-scripts
   npm --prefix cdk run build
   npm --prefix cdk run test:github-oidc
+  npm --prefix cdk run test:version-retain
 fi
 echo "lastgit ci gate PASSED"

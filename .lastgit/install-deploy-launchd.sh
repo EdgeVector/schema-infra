@@ -54,6 +54,14 @@ case "$CMD" in
       esac
     fi
     chmod +x "$RUNNER"
+    # The canary ticker fetches this same checkout under launchd; give it the
+    # keychain-free forge credential helper (deploy-run.sh itself uses a
+    # GIT_CONFIG token header).
+    # shellcheck source=scripts/deploy/canary-run-root.sh
+    if [ -f "$ROOT/scripts/deploy/canary-run-root.sh" ]; then
+      ( source "$ROOT/scripts/deploy/canary-run-root.sh"
+        canary_register_forge_credential_helper "$ROOT" )
+    fi
 
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

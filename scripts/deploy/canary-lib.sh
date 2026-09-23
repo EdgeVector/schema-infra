@@ -45,8 +45,32 @@ alias_version() {
     --output text 2>/dev/null || echo ""
 }
 
+# Code SHA-256 of one published version ("" if the version does not exist).
+version_code_sha() {
+  local fn="$1" region="$2" ver="$3"
+  aws lambda get-function-configuration \
+    --function-name "$fn" \
+    --qualifier "$ver" \
+    --region "$region" \
+    --query 'CodeSha256' \
+    --output text 2>/dev/null || true
+}
+
+version_exists() {
+  local fn="$1" region="$2" ver="$3"
+  aws lambda get-function --function-name "$fn:$ver" --region "$region" >/dev/null 2>&1
+}
+
 # After CDK points live → NEW 100%, re-pin: primary=OLD, 10% → NEW.
-# Returns 0 if weighted pin applied, 1 if skipped (no soak state).
+# OLD must be the version the live alias served BEFORE this deploy. It is the
+# only safe primary: any other version is code nobody chose to serve now.
+# Return codes:
+#   0  weighted pin applied (primary=OLD, CANARY_WEIGHT → NEW)
+#   1  no pin needed (no distinct prior version) — live stays where it is
+#   2  REFUSED, fail closed: OLD no longer exists. The alias is NOT touched,
+#      so live stays on whatever it serves now (100% NEW after a CDK deploy).
+#      The caller must alert. Never substitute an older version: on
+#      2026-09-23 that put 90% of prod on 2026-09-01 code.
 set_canary_weights() {
   local fn="$1" region="$2" old_ver="$3" new_ver="$4"
   if [ -z "${new_ver:-}" ] || [ "$new_ver" = "None" ]; then
@@ -57,25 +81,16 @@ set_canary_weights() {
     canary_log "canary: no prior version to weight (old=${old_ver:-none} new=$new_ver) — leaving 100% on new"
     return 1
   fi
+  if ! version_exists "$fn" "$region" "$old_ver"; then
+    canary_log "canary: REFUSED — pre-deploy live version old=$old_ver no longer exists; not pinning any other version; live alias left as is (new=$new_ver)"
+    return 2
+  fi
   # Weighted routing is incompatible with provisioned concurrency on the alias.
   if aws lambda get-provisioned-concurrency-config \
       --function-name "$fn" --qualifier live --region "$region" >/dev/null 2>&1; then
     canary_log "canary: dropping provisioned concurrency on live (required for weighted canary)"
     aws lambda delete-provisioned-concurrency-config \
       --function-name "$fn" --qualifier live --region "$region" >/dev/null 2>&1 || true
-  fi
-  if ! aws lambda get-function --function-name "$fn:$old_ver" --region "$region" >/dev/null 2>&1; then
-    local fallback
-    fallback=$(aws lambda list-versions-by-function --function-name "$fn" --region "$region" \
-      --query 'Versions[?Version!=`$LATEST`].Version' --output text 2>/dev/null \
-      | tr '\t' '\n' | sort -n | grep -v "^${new_ver}$" | tail -1 || true)
-    if [ -n "${fallback:-}" ] && [ "$fallback" != "$new_ver" ]; then
-      canary_log "canary: old=$old_ver missing; using fallback primary=$fallback"
-      old_ver="$fallback"
-    else
-      canary_log "canary: old=$old_ver missing and no fallback — leave 100% on $new_ver"
-      return 1
-    fi
   fi
   canary_log "canary: pin primary=$old_ver canary=$new_ver weight=$CANARY_WEIGHT"
   aws lambda update-alias \
@@ -85,6 +100,19 @@ set_canary_weights() {
     --routing-config "AdditionalVersionWeights={${new_ver}=${CANARY_WEIGHT}}" \
     --region "$region" >/dev/null
   return 0
+}
+
+# Best-effort operator alert for a refused canary pin: a Situations notice
+# (FYI timeline) plus stderr. Never fails the caller by itself.
+canary_alert() {
+  local summary="$1"
+  echo "ALERT: $summary" >&2
+  canary_log "ALERT: $summary"
+  if command -v situations >/dev/null 2>&1 && [ "${SCHEMA_CANARY_ALERT_NOTICE:-1}" != "0" ]; then
+    situations notice --title "schema-infra canary pin refused" --kind deploy \
+      --system schema-service --actor script:schema-infra-canary \
+      --summary "$summary" >/dev/null 2>&1 || true
+  fi
 }
 
 # Promote canary version to 100% (must clear routing weights).
@@ -109,6 +137,10 @@ promote_canary_full() {
 # Rollback: 100% to old version.
 rollback_canary() {
   local fn="$1" region="$2" old_ver="$3"
+  if ! version_exists "$fn" "$region" "$old_ver"; then
+    canary_alert "canary ROLLBACK impossible: version $old_ver of $fn no longer exists; live alias left as is"
+    return 1
+  fi
   canary_log "canary: ROLLBACK 100% → version $old_ver"
   aws lambda update-alias \
     --function-name "$fn" \

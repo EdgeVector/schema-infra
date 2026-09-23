@@ -126,4 +126,29 @@ if grep -q 'mirror-clones/schema-infra/.lastgit/canary-ticker.sh' "$TMP/plist.tx
   exit 1
 fi
 
+# Forge credential helper registration (keychain-free unattended fetch):
+# an empty reset entry, then the last-stack forge helper, idempotently.
+mkdir -p "$TMP/fakehome/.last-stack/bin"
+printf '#!/bin/sh\nexit 0\n' >"$TMP/fakehome/.last-stack/bin/git-credential-last-stack-forge"
+chmod +x "$TMP/fakehome/.last-stack/bin/git-credential-last-stack-forge"
+(
+  export HOME="$TMP/fakehome"
+  # shellcheck source=/dev/null
+  source "$HELPER"
+  canary_register_forge_credential_helper "$CLONE"
+  canary_register_forge_credential_helper "$CLONE"
+)
+git -C "$CLONE" config --get-all credential.http://localhost:3300.helper >"$TMP/helpers.txt" || true
+# shellcheck disable=SC2016
+printf '\n!"$HOME/.last-stack/bin/git-credential-last-stack-forge"\n' >"$TMP/helpers.want"
+if ! cmp -s "$TMP/helpers.txt" "$TMP/helpers.want"; then
+  echo "forge credential helper not registered as [reset, forge helper]:" >&2
+  cat "$TMP/helpers.txt" >&2
+  exit 1
+fi
+grep -q 'canary_register_forge_credential_helper' "$INSTALLER" || {
+  echo "ticker installer does not register the forge credential helper" >&2; exit 1; }
+grep -q 'canary_register_forge_credential_helper' "$ROOT/.lastgit/install-deploy-launchd.sh" || {
+  echo "deploy installer does not register the forge credential helper" >&2; exit 1; }
+
 echo "ok canary-run-root $(basename "$ROOT")"

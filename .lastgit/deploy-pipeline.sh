@@ -112,6 +112,8 @@ DEV_CODE_SHA=""
 PROD_NEW_VER=""
 PROD_CODE_SHA=""
 OLD_VER=""
+PIN_RC=1          # 0 = weighted canary pin in place (soak state is written)
+CANARY_REFUSED=0
 
 if [ "$KIND" = "code-only" ]; then
   # ---------- CODE-ONLY: publish, never CDK ----------
@@ -147,6 +149,7 @@ if [ "$KIND" = "code-only" ]; then
   schema_telemetry_stage_end prod_deploy_code_publish "$stage_started"
   PROD_NEW_VER="$(printf '%s\n' "$PROD_OUT" | grep '^NEW_VERSION=' | cut -d= -f2)"
   PROD_CODE_SHA="$(printf '%s\n' "$PROD_OUT" | grep '^CODE_SHA256=' | cut -d= -f2-)"
+  [ "$(printf '%s\n' "$PROD_OUT" | grep '^CANARY_PIN=' | cut -d= -f2)" = "pinned" ] && PIN_RC=0
   PROD_CANARY_EPOCH="$(schema_telemetry_epoch)"
   CDK_INVOKED=false
   NEW_VER="$PROD_NEW_VER"
@@ -185,7 +188,9 @@ else
   OLD_VER=""
   if [ -n "${FN:-}" ] && [ "$FN" != "None" ]; then
     OLD_VER=$(alias_version "$FN" us-east-1 || true)
-    canary_log "pre-prod alias version old=${OLD_VER:-none} fn=$FN"
+    OLD_CODE_SHA=""
+    [ -n "${OLD_VER:-}" ] && OLD_CODE_SHA="$(version_code_sha "$FN" us-east-1 "$OLD_VER")"
+    canary_log "pre-prod alias version old=${OLD_VER:-none} old_code_sha=${OLD_CODE_SHA:-none} fn=$FN"
   fi
   stage_started="$(schema_telemetry_stage_start prod_deploy_skip_build)"
   ./deploy.sh prod --yes --skip-build
@@ -209,8 +214,27 @@ else
   # CDK path: canary pin happens here (code-only pinned inside code-publish).
   canary_log "post-prod alias version new=$NEW_VER fn=$FN"
   stage_started="$(schema_telemetry_stage_start canary_pin)"
-  set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER" || true
+  PIN_RC=0
+  set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER" || PIN_RC=$?
   schema_telemetry_stage_end canary_pin "$stage_started"
+  if [ "$PIN_RC" -eq 2 ]; then
+    # Fail closed: the pre-deploy live version is gone, so there is no safe
+    # primary and no rollback target. Live stays 100% on NEW (CDK already
+    # put it there). Never pin an older version instead.
+    if [ -n "${OLD_CODE_SHA:-}" ] && [ "$OLD_CODE_SHA" = "${PROD_CODE_SHA:-}" ]; then
+      # Byte-identical code (e.g. the first deploy after the RETAIN change,
+      # when CloudFormation still deletes the version the old template
+      # owned): nothing new to soak, nothing lost.
+      canary_log "canary: old=$OLD_VER gone but new=$NEW_VER has the same CodeSha256 — no canary needed"
+      PIN_RC=1
+    else
+      CANARY_REFUSED=1
+      schema_telemetry_emit canary_refused "oid=$OID" "old_version=$OLD_VER" \
+        "new_version=$NEW_VER" "old_code_sha256=${OLD_CODE_SHA:-}" \
+        "new_code_sha256=${PROD_CODE_SHA:-}"
+      canary_alert "prod canary REFUSED oid=$OID: pre-deploy live version $OLD_VER was deleted by the deploy; live is 100% on $NEW_VER with no soak and no rollback version. Check the CDK version RemovalPolicy."
+    fi
+  fi
 fi
 
 # ---------- 5. Soak state + release evidence ----------
@@ -223,7 +247,9 @@ h = float(os.environ.get("CANARY_SOAK_HOURS", "24"))
 print((datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
 )
-if [ -n "${OLD_VER:-}" ] && [ "$OLD_VER" != "$NEW_VER" ] && [ "$OLD_VER" != '$LATEST' ] && [ "$OLD_VER" != "None" ]; then
+# Soak state only when a weighted pin is really in place: the ticker must
+# never promote or roll back against a version the alias does not serve.
+if [ "${PIN_RC:-1}" -eq 0 ] && [ -n "${OLD_VER:-}" ] && [ "$OLD_VER" != "$NEW_VER" ] && [ "$OLD_VER" != '$LATEST' ] && [ "$OLD_VER" != "None" ]; then
   write_canary_state "$OID" "${OLD_VER:-}" "$NEW_VER" "$FN" "us-east-1" "$STARTED" "$PROMOTE_AFTER"
   canary_log "canary soak until $PROMOTE_AFTER (CANARY_SOAK_HOURS=${CANARY_SOAK_HOURS})"
   SOAK_MSG="prod canary soaking until $PROMOTE_AFTER"
@@ -250,6 +276,12 @@ schema_telemetry_emit release_row \
   "builds_for_digest=1"
 
 printf '%s\n' "$OID" > "$LAST_OID_FILE"
+if [ "${CANARY_REFUSED:-0}" = "1" ]; then
+  # The release is live (100% on NEW) but unguarded. Fail the pipeline so the
+  # deploy-pipeline status on the commit is red and a human looks.
+  echo "FAIL: lastgit schema deploy-pipeline — prod canary refused (pre-deploy version $OLD_VER missing); live=100% $NEW_VER" >&2
+  exit 1
+fi
 echo "lastgit schema deploy-pipeline PASSED ($SOAK_MSG)"
 if [ "$KIND" != "code-only" ]; then
   echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"
