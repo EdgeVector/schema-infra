@@ -19,6 +19,8 @@ for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
   echo "bash -n $f"
   bash -n "$f"
 done
+echo "== forge token security test =="
+bash tests/test-forge-token-argv-leak.sh
 echo "== canary helper tests =="
 bash scripts/deploy/test-code-publish.sh
 bash scripts/deploy/test-canary-weight-pin.sh
