@@ -107,7 +107,7 @@ curl -v -K "$AUTH_CONF" -H "Accept: application/json" \
 # Examine the verbose output for the Authorization header.
 # The -v mode prefixes sent headers with '> '.
 if grep -q "> Authorization: token " "$verbose_out"; then
-  echo "✓ Test 3 passed: Authorization header is sent by curl (authentication verified)"
+  echo "✓ Test 3 passed: Authorization header is sent by curl"
 else
   # Fallback: check if the config file was parsed without error.
   # If curl exits cleanly with a config file, it accepted the syntax.
@@ -123,4 +123,4 @@ else
 fi
 
 echo ""
-echo "All tests passed. The safe form (using curl -K config file) does not leak the token on argv and sends authentication headers."
+echo "All tests passed. The safe form (using curl -K config file) does not leak the token on argv and correctly sends the Authorization header."
