@@ -62,7 +62,16 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0="http.${FORGE_ROOT}/.extraHeader"
 export GIT_CONFIG_VALUE_0="Authorization: token ${TOKEN}"
 export LASTGIT_DEPLOY_TIP_URL="${LASTGIT_DEPLOY_TIP_URL:-${FORGE_ROOT}/${FORGE_OWNER}/${REPO}.git}"
-api() { curl -sS --max-time 30 -H "Authorization: token $TOKEN" -H "Accept: application/json" "$@"; }
+
+# Write token to a 0600 config file for curl instead of passing it on argv.
+# This keeps the token off process argv, which is readable by every local account via ps aux.
+AUTH_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/forge-deploy-auth.XXXXXX")"
+AUTH_CONF="$AUTH_CONF_DIR/auth.conf"
+printf 'header = "Authorization: token %s"\n' "$TOKEN" >"$AUTH_CONF"
+chmod 600 "$AUTH_CONF"
+trap "rm -rf '$AUTH_CONF_DIR'" EXIT
+
+api() { curl -sS --max-time 30 -K "$AUTH_CONF" -H "Accept: application/json" "$@"; }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 self_sum() { shasum -a 256 "$SELF" 2>/dev/null | awk '{print $1}'; }
 # Fast-forward the checkout this script runs from to the forge tip. git replaces
