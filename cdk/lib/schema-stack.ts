@@ -810,19 +810,20 @@ exports.handler = async (event) => {
       }
     }
 
-    const quotaHourMetrics = quotaBuckets.map((bucket, index) =>
-      mutationGateMetric(
-        `QuotaExceeded${toPascalCase(bucket)}Hour`,
-        `${bucket} hour`,
-        Duration.hours(1),
-        "sum",
-      ).with({ id: `h${index + 1}` }),
-    );
+    // `RejectQuotaExceeded` is the metric-filter contract for every
+    // enforcement rejection with status="quota_exceeded". The Lambda emits
+    // that status on every quota rejection, and this metric has production
+    // datapoints. Use it for the alarm rather than the bucket/window filter
+    // names, which are a dashboard breakdown and have no live datapoints.
+    const quotaHourMetric = mutationGateMetric(
+      "RejectQuotaExceeded",
+      "quota rejections",
+      Duration.hours(1),
+      "sum",
+    ).with({ id: "q" });
     const hourlyQuotaExceeded = new cloudwatch.MathExpression({
-      expression: quotaHourMetrics.map((_, index) => `h${index + 1}`).join(" + "),
-      usingMetrics: Object.fromEntries(
-        quotaHourMetrics.map((metric, index) => [`h${index + 1}`, metric]),
-      ),
+      expression: "q",
+      usingMetrics: { q: quotaHourMetric },
       period: Duration.hours(1),
       label: "hourly cap rejects",
     });
@@ -874,9 +875,9 @@ exports.handler = async (event) => {
     );
     mutationGateDashboard.addWidgets(
       new cloudwatch.GraphWidget({
-        title: "Cap hits by hourly bucket",
+        title: "Hourly quota rejections",
         width: 12,
-        left: quotaHourMetrics,
+        left: [quotaHourMetric],
       }),
       new cloudwatch.GraphWidget({
         title: "Rejects by status",
