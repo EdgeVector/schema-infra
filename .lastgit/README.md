@@ -1,3 +1,7 @@
+> **Retired 2026-09-30.** schema-infra moved to GitHub. The LastGit deploy and
+> canary launchd jobs described below are stopped and not part of the gate.
+> This file is kept as history. See `.github/workflows/README.md`.
+
 # LastGit home — schema-infra (GitHub = public mirror)
 
 | Role | Location |

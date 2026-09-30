@@ -1,4 +1,4 @@
 [submodule "fold"]
 	path = fold
-	url = http://localhost:3300/EdgeVector/fold.git
+	url = https://github.com/EdgeVector/fold.git
 	branch = main

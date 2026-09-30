@@ -137,6 +137,8 @@ mkdir -p "$TMP/hostbin"
 cat > "$TMP/hostbin/docker" <<'EOF'
 #!/bin/sh
 echo "$*" >>"${DOCKER_LOG:?}"
+# drain stdin (docker build -): an unread pipe SIGPIPEs the writer on Linux under pipefail
+if [ ! -t 0 ]; then cat >/dev/null; fi
 exit 0
 EOF
 chmod +x "$TMP/hostbin/docker"

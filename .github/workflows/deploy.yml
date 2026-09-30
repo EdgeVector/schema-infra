@@ -1,13 +1,12 @@
-name: deploy.yml (mirror-inert)
+name: deploy.yml (inert)
 
-# GitHub is a read-only mirror. LastGit is SoT; AWS deploy is on the forge host.
-# This workflow does nothing automatically.
-
+# INERT ON PURPOSE. This repo deploys to AWS prod. This workflow is
+# workflow_dispatch only and runs no deploy. Re-enabling automation needs Tom.
 on:
   workflow_dispatch:
 
 jobs:
   inert:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - run: echo "GitHub mirror — no Actions. Use LastGit + forge-host deploy-pipeline."
+      - run: echo "Deploy automation is disabled. Decision pending with Tom."
