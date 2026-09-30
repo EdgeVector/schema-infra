@@ -109,7 +109,12 @@ export LASTGIT_CANARY_SKIP_LAUNCHCTL=1
 "$INSTALLER" install >/dev/null
 test -x "$TMP/log/canary-ticker-wrapper.sh"
 test -f "$TMP/log/canary-run-root.sh"
-plutil -p "$LASTGIT_DEPLOY_PLIST" >"$TMP/plist.txt"
+# plutil is macOS-only; the XML plist is plain text, so grep it on Linux runners.
+if command -v plutil >/dev/null 2>&1; then
+  plutil -p "$LASTGIT_DEPLOY_PLIST" >"$TMP/plist.txt"
+else
+  cp "$LASTGIT_DEPLOY_PLIST" "$TMP/plist.txt"
+fi
 grep -q 'canary-ticker-wrapper.sh' "$TMP/plist.txt" || {
   echo "plist missing durable wrapper path:" >&2
   cat "$TMP/plist.txt" >&2
