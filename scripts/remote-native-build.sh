@@ -10,6 +10,10 @@
 # Ubuntu 24.04, x86_64 Docker), where parallel Cargo is safe and a
 # persistent cache makes warm builds fast.
 #
+# NOTE (2026-09-29): the PC default was retired. This script is opt-in only:
+# set SCHEMA_BUILD_REMOTE_HOST to an ssh alias of a non-PC native x86_64 host.
+# Nothing calls it by default.
+#
 # Contract: identical inputs and identical container to the local path in
 # build.sh — only the execution host differs. The artifact lands at
 #   <fold>/target/lambda/server_lambda/bootstrap.zip
@@ -27,7 +31,7 @@
 #   scripts/remote-native-build.sh <fold-pin-oid> <local-fold-dir>
 #
 # Env:
-#   SCHEMA_BUILD_REMOTE_HOST        ssh host alias (e.g. "pc") — required
+#   SCHEMA_BUILD_REMOTE_HOST        ssh host alias of a native x86_64 Linux host — required
 #   SCHEMA_BUILD_REMOTE_WSL_DISTRO  default Ubuntu-24.04
 #   SCHEMA_BUILD_REMOTE_WSL_USER    default tom
 #   SCHEMA_BUILD_REMOTE_ROOT       default /home/tom/schema-lambda-build
