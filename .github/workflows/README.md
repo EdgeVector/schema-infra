@@ -1,9 +1,13 @@
-# GitHub is a read-only mirror
+# GitHub workflows
 
-Source of truth: **LastGit** (`lastdb:///<repo>`).
-Automatic AWS deploys: **forge-host LastGit deploy-pipeline** (launchd).
+GitHub is the gate of record for this repo since 2026-09-30.
 
-GitHub Actions workflows in this directory are **intentionally inert**
-(workflow_dispatch-only noops, and org Actions are disabled_manually).
-Do not re-enable scheduled or push-triggered jobs without Tom clearance.
+- `ci-required.yml`: the merge gate. Required status check `ci-required`.
+  It runs `.lastgit/ci.sh` (shell tests and CDK build and synth tests). It does
+  not deploy and has no AWS credentials.
+- `deploy.yml` and `auto-deploy-on-fold.yml`: inert stubs. They are
+  `workflow_dispatch` only and do nothing. This repo deploys to AWS prod.
+  Do not add push, schedule, or fold-triggered deploy triggers without Tom.
 
+The old LastGit deploy pipeline (`.lastgit/deploy-*`, canary ticker) is not
+running. Deploy automation is off until Tom chooses a GitHub-keyed replacement.
