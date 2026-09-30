@@ -114,9 +114,10 @@ if [ -s "$ZIP_CACHED" ] && [ -s "$MANIFEST" ]; then
     echo "WARN: cached artifact digest mismatch (want=$want got=$got) — rebuilding" >&2
 fi
 
-# Cache miss: build once (remote native by default), then freeze the result.
-# Tip-executed default — see build.sh. Supervisor LaunchAgent need not be reinstalled.
-SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-pc}"
+# Cache miss: build once (local Docker by default; remote native x86_64 only
+# when SCHEMA_BUILD_REMOTE_HOST names a non-PC host), then freeze the result.
+# The PC default was retired 2026-09-29 — see build.sh.
+SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-}"
 export SCHEMA_BUILD_REMOTE_HOST
 stage_started="$(schema_telemetry_stage_start artifact_build)"
 if [ -n "${SCHEMA_BUILD_REMOTE_HOST:-}" ]; then

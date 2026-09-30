@@ -105,11 +105,12 @@ copy_mirror_lambda_artifact() {
     rsync -a --delete "$mirror_lambda_dir"/ "$FOLD_DIR/target/lambda"/
 }
 
-# Default builder: gaming PC (ssh Host `pc` → WSL native x86). This lives
-# in tip-executed product code so every deploy uses the tip's policy without
-# reinstalling the LaunchAgent supervisor. Unset → pc; empty string forces
-# the local Docker/QEMU fallback (SCHEMA_BUILD_REMOTE_HOST="").
-SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-pc}"
+# Default builder: local Docker (--platform linux/amd64, QEMU on Apple
+# Silicon). The gaming-PC default (ssh Host `pc`) was retired 2026-09-29.
+# Opt in to a remote native x86_64 builder for a non-PC host by exporting
+# SCHEMA_BUILD_REMOTE_HOST=<ssh-host-alias>. QEMU builds can wedge; run
+# production deploys through CI or another native x86_64 host.
+SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-}"
 export SCHEMA_BUILD_REMOTE_HOST
 
 if [ -n "${SCHEMA_BUILD_REMOTE_HOST:-}" ]; then

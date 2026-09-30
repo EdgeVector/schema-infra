@@ -36,11 +36,22 @@ through `.lastgit/deploy-pipeline.sh`:
 - **no-impact** — docs/tests/proofs/frontend only. The deploy is skipped
   with an explicit successful reason.
 
-Artifacts are built once per input digest on the native x86_64 builder
-(`scripts/remote-native-build.sh`) into a content-addressed store with a
+Artifacts are built once per input digest into a content-addressed store with a
 secret-free manifest; pending main events coalesce to the newest eligible
 tip before any expensive work. Evidence for the North Star terminal proof
 is collected by `scripts/proof/schema-lambda-fast-deployment/collect.py`.
+
+### Build host (PC default retired 2026-09-29)
+
+The Lambda zip builds in local Docker with `--platform linux/amd64`. On Apple
+Silicon this runs under QEMU. The artifact has the correct x86_64
+architecture, but QEMU builds are slow and can wedge mid-compile. The default
+build no longer uses the gaming PC (`SCHEMA_BUILD_REMOTE_HOST=pc` is retired).
+
+- Production deploys must go through CI or another native x86_64 host.
+- Opt in to a remote native builder with `SCHEMA_BUILD_REMOTE_HOST=<ssh-alias>`
+  (see `scripts/remote-native-build.sh`). Do not point it at the PC.
+- An empty or unset `SCHEMA_BUILD_REMOTE_HOST` selects the local Docker path.
 
 ## Architecture
 

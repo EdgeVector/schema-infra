@@ -37,9 +37,10 @@ TIMEOUT_MS="${LASTGIT_DEPLOY_TIMEOUT_MS:-$DEFAULT_TIMEOUT_MS}"
 export LASTGIT_SOCKET="${LASTGIT_SOCKET:-$HOME/.lastdb/data/folddb.sock}"
 export LASTGIT_SCHEMA_MAP="${LASTGIT_SCHEMA_MAP:-$HOME/.lastgit/schema-map.json}"
 # Deploy-path decision decision-schema-infra-deploy-path-native-x86-pc:
-# the Lambda build runs on the native x86_64 builder by default. Set
-# SCHEMA_BUILD_REMOTE_HOST="" to force the legacy local QEMU path.
-export SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-pc}"
+# the PC native x86_64 builder default was retired 2026-09-29. The build now
+# defaults to local Docker/QEMU. Set SCHEMA_BUILD_REMOTE_HOST=<ssh-alias> to
+# opt in to a remote native x86_64 host that is not the PC.
+export SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-}"
 export AWS_PROFILE="${AWS_PROFILE:-default}"
 # Older accepted schema-infra commits predate a repository-level Cargo
 # build-jobs mitigation. They still have to pass their original staged
