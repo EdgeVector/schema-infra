@@ -77,8 +77,45 @@ for (const role of deployRoles) {
   subClaims.push(sub);
 }
 assert.deepStrictEqual(subClaims.sort(), [
-  "repo:EdgeVector/schema-infra:*",
+  "repo:EdgeVector/schema-infra:ref:refs/heads/main",
   "repo:EdgeVector/schema-infra:ref:refs/heads/main",
 ]);
+
+// No role may trust a wildcard sub (a pull_request run could assume it).
+for (const sub of subClaims) {
+  assert.ok(!sub.includes("*"), `sub claim must not contain a wildcard: ${sub}`);
+}
+
+// The pipeline actions must be present on both roles and resource-scoped.
+const policies = resources.filter((resource) => resource.Type === "AWS::IAM::Policy") as unknown as Array<{
+  Properties: { PolicyDocument: { Statement: Array<{ Sid: string; Action: string | string[]; Resource: unknown }> } };
+}>;
+assert.equal(policies.length, 2, "one inline policy per deploy role");
+for (const policy of policies) {
+  const bySid = new Map(policy.Properties.PolicyDocument.Statement.map((s) => [s.Sid, s]));
+  for (const sid of [
+    "SchemaLambdaCodeAliasVersion",
+    "ReadCanaryAlarms",
+    "ReadSchemaLambdaLogs",
+    "SmokeReadQuotaTable",
+    "ArtifactBucketAccess",
+  ]) {
+    assert.ok(bySid.has(sid), `policy has ${sid}`);
+  }
+  const lambda = bySid.get("SchemaLambdaCodeAliasVersion")!;
+  const actions = ([] as string[]).concat(lambda.Action);
+  for (const action of [
+    "lambda:UpdateFunctionCode",
+    "lambda:PublishVersion",
+    "lambda:UpdateAlias",
+    "lambda:GetAlias",
+  ]) {
+    assert.ok(actions.includes(action), `lambda statement has ${action}`);
+  }
+  assert.ok(!JSON.stringify(lambda.Resource).includes('"*"'), "lambda statement is resource-scoped");
+  assert.ok(!actions.includes("lambda:*"), "no lambda wildcard");
+  const alarms = bySid.get("ReadCanaryAlarms")!;
+  assert.equal(alarms.Action, "cloudwatch:DescribeAlarms");
+}
 
 console.log("github-oidc synth test passed (issuer URL, audience, condition keys pinned)");
