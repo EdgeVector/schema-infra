@@ -4,20 +4,21 @@ name: deploy
 #
 #   dev  : automatic. Runs when the `ci-required` workflow finishes with
 #          success on a push to main.
-#   prod : manual. Only workflow_dispatch with target=prod and the typed
-#          confirmation runs it. The prod job needs the dev job of the same
-#          run (dev deploy + dev smoke first).
+#   prod : automatic after that dev job. The dev job writes prod-eligible
+#          only when dev deploy and dev smoke both pass. A manual
+#          workflow_dispatch with target=prod and confirm_prod=deploy-prod
+#          does the same pair of jobs.
+#
+# Prod pins 5% of the live alias on the new version (CANARY_WEIGHT=0.05).
+# canary-ticker.yml runs every 15 minutes. After 24 hours with alarms OK it
+# promotes to 100%. An ALARM rolls the alias back to the previous version.
+# The ticker reads the live alias. A runner has no durable state file.
 #
 # DO NOT add an `environment:` key to any job. It changes the OIDC `sub`
 # claim to `environment:<name>`. The IAM trust in
 # cdk/lib/schema-infra-oidc-stack.ts matches the ref claim
 # `repo:EdgeVector/schema-infra:ref:refs/heads/main` only, so the assume-role
 # call would fail.
-#
-# The prod job cannot run the 24h canary ticker: canary soak state lives in a
-# local file today. The prod job keeps the 10% canary pin, uploads the state
-# file as a run artifact and prints a warning. A human promotes or rolls back.
-# Follow-up: move canary state to SSM and add a scheduled ticker workflow.
 on:
   workflow_run:
     workflows: [ci-required]
@@ -26,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "dev = dev only. prod = dev, then prod with the 10% canary pin."
+        description: "dev = dev only. prod = dev, then a 5% prod canary."
         type: choice
         options: [dev, prod]
         default: dev
@@ -38,6 +39,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 concurrency:
   group: schema-infra-deploy
@@ -49,6 +51,9 @@ env:
 jobs:
   deploy-dev:
     name: deploy-dev
+    outputs:
+      prod_eligible: ${{ steps.gate.outputs.eligible }}
+      sha: ${{ steps.gate.outputs.sha }}
     # workflow_run: only a successful push run of ci-required on main.
     # workflow_dispatch: only from main (the OIDC trust is main-only).
     if: >-
@@ -85,6 +90,11 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/SchemaInfraDeployDev
           aws-region: us-west-2
+      - name: Restore last deployed oid
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+        run: bash scripts/deploy/restore-last-oid.sh
       - name: Deploy dev and smoke dev
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -95,8 +105,21 @@ jobs:
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
         run: bash .lastgit/deploy-pipeline.sh
+      - name: Record prod eligibility
+        id: gate
+        if: success()
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/deploy-state/prod-eligible"
+          if [ -s "$f" ]; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+            echo "sha=$(tr -d '[:space:]' < "$f")" >> "$GITHUB_OUTPUT"
+          else
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Keep the artifact for the prod job
-        if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+        if: steps.gate.outputs.eligible == 'true' && (github.event_name == 'workflow_run' || inputs.target == 'prod')
         uses: actions/upload-artifact@v4
         with:
           name: schema-artifact
@@ -107,15 +130,23 @@ jobs:
     name: deploy-prod
     needs: deploy-dev
     if: >-
-      github.event_name == 'workflow_dispatch'
-      && inputs.target == 'prod'
-      && inputs.confirm_prod == 'deploy-prod'
-      && github.ref == 'refs/heads/main'
+      needs.deploy-dev.outputs.prod_eligible == 'true'
+      && (
+        (github.event_name == 'workflow_run'
+          && github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'push'
+          && github.event.workflow_run.head_branch == 'main')
+        || (github.event_name == 'workflow_dispatch'
+          && inputs.target == 'prod'
+          && inputs.confirm_prod == 'deploy-prod'
+          && github.ref == 'refs/heads/main')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.deploy-dev.outputs.sha }}
           fetch-depth: 0
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
@@ -135,28 +166,31 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/SchemaInfraDeployProd
           aws-region: us-east-1
-      - name: Deploy prod (10% canary pin) and smoke prod
+      - name: Restore last deployed oid
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+        run: bash scripts/deploy/restore-last-oid.sh
+      - name: Deploy prod (5% canary) and smoke prod
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
-          LASTGIT_CI_OID: ${{ github.sha }}
+          LASTGIT_CI_OID: ${{ needs.deploy-dev.outputs.sha }}
           SCHEMA_DEPLOY_SKIP_DEV: "1"
+          CANARY_WEIGHT: "0.05"
+          CANARY_SOAK_HOURS: "24"
+          CANARY_STATE_FROM_ALIAS: "1"
+          CANARY_RUN_ROOT_REFRESHED: "1"
+          CANARY_SKIP_FETCH: "1"
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
         run: bash .lastgit/deploy-pipeline.sh
-      - name: Canary state (manual promote or rollback needed)
-        if: always()
-        run: |
-          f="$RUNNER_TEMP/deploy-state/canary-state.json"
-          if [ -f "$f" ]; then
-            echo "::warning::Prod canary is pinned. No ticker runs on GitHub yet. Promote or roll back by hand."
-            cat "$f"
-          fi
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Save the prod oid for the next classifier
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          name: prod-canary-state
-          path: ${{ runner.temp }}/deploy-state
+          name: last-deployed-oid
+          path: ${{ runner.temp }}/deploy-state/last-deployed-oid
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 90

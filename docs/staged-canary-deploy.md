@@ -2,15 +2,16 @@
 
 ## Flow
 
-1. **Merge to LastGit `main`** (CI `ci-required` green).
-2. **Deploy watcher** runs `.lastgit/deploy-pipeline.sh`:
+1. **Merge to `main`** (CI `ci-required` green).
+2. **GitHub `deploy.yml`** runs `.lastgit/deploy-pipeline.sh`:
    - Deploy **dev** (`us-west-2`)
    - **Smoke** (`scripts/deploy/smoke-dev.sh`)
    - Deploy **prod** (`us-east-1`)
-   - Pin **~10%** of prod `live` alias traffic on the new version (canary)
-3. **Canary ticker** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
+   - Pin **5%** of prod `live` alias traffic on the new version (canary)
+3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
    - If alarms ALARM anytime → **rollback** to previous version
+   - The soak clock is the live alias `LastModified`. A runner-local state file is not the record.
 
 ## Previous version: retained, never substituted
 
@@ -30,14 +31,14 @@
 
 ## “One box”
 
-Lambda is multi-tenant. **10% weighted alias traffic** is the serverless stand-in for a single canary box. Override with `CANARY_WEIGHT=0.05` etc.
+Lambda is multi-tenant. **5% weighted alias traffic** is the live canary. Override with `CANARY_WEIGHT`.
 
 ## Env
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `CANARY_SOAK_HOURS` | `24` | Hours before auto-promote |
-| `CANARY_WEIGHT` | `0.1` | Fraction of traffic on new version |
+| `CANARY_WEIGHT` | `0.05` | Fraction of live traffic on the new version |
 | `LASTGIT_DEPLOY_SKIP_PROD` | unset | Stop after successful dev smoke |
 | `DEPLOY_FREEZE` | unset | Skip deploys |
 | `SCHEMA_CANARY_ALARM_NAMES` | `schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod` | Prod soak alarms. Unset or empty still uses this pair — never a time-only gate. |

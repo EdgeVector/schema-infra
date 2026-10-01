@@ -1,0 +1,51 @@
+name: canary-ticker
+
+# Promote or roll back the schema-infra prod canary.
+#
+# The deploy workflow pins 5% of live traffic on the new Lambda version.
+# This workflow is the old 15-minute launchd ticker. It reads the live alias.
+# LastModified plus 24 hours is the promote time. Alarms OK at that time
+# move the alias to 100% on the new version. ALARM at any tick rolls the
+# alias back to the previous version.
+#
+# A weight other than 0.05 is left alone.
+#
+# DO NOT add an `environment:` key. The prod role trusts
+# repo:EdgeVector/schema-infra:ref:refs/heads/main only.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: schema-infra-canary-ticker
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: tick
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployProd
+          aws-region: us-east-1
+      - name: Soak tick
+        env:
+          CANARY_WEIGHT: "0.05"
+          CANARY_SOAK_HOURS: "24"
+          CANARY_STATE_FROM_ALIAS: "1"
+          CANARY_RUN_ROOT_REFRESHED: "1"
+          CANARY_SKIP_FETCH: "1"
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+        run: bash .lastgit/canary-ticker.sh

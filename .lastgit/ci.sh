@@ -24,6 +24,8 @@ bash tests/test-forge-token-argv-leak.sh
 echo "== canary helper tests =="
 bash scripts/deploy/test-code-publish.sh
 bash scripts/deploy/test-canary-weight-pin.sh
+bash scripts/deploy/test-canary-alias-tick.sh
+bash scripts/deploy/test-restore-last-oid.sh
 bash scripts/deploy/test-canary-alarm-gate.sh
 bash scripts/deploy/test-canary-run-root.sh
 bash scripts/deploy/test-checkout-lock.sh
