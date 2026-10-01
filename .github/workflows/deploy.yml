@@ -1,12 +1,162 @@
-name: deploy.yml (inert)
+name: deploy
 
-# INERT ON PURPOSE. This repo deploys to AWS prod. This workflow is
-# workflow_dispatch only and runs no deploy. Re-enabling automation needs Tom.
+# Staged schema-infra deploy over GitHub OIDC (no stored AWS keys).
+#
+#   dev  : automatic. Runs when the `ci-required` workflow finishes with
+#          success on a push to main.
+#   prod : manual. Only workflow_dispatch with target=prod and the typed
+#          confirmation runs it. The prod job needs the dev job of the same
+#          run (dev deploy + dev smoke first).
+#
+# DO NOT add an `environment:` key to any job. It changes the OIDC `sub`
+# claim to `environment:<name>`. The IAM trust in
+# cdk/lib/schema-infra-oidc-stack.ts matches the ref claim
+# `repo:EdgeVector/schema-infra:ref:refs/heads/main` only, so the assume-role
+# call would fail.
+#
+# The prod job cannot run the 24h canary ticker: canary soak state lives in a
+# local file today. The prod job keeps the 10% canary pin, uploads the state
+# file as a run artifact and prints a warning. A human promotes or rolls back.
+# Follow-up: move canary state to SSM and add a scheduled ticker workflow.
 on:
+  workflow_run:
+    workflows: [ci-required]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "dev = dev only. prod = dev, then prod with the 10% canary pin."
+        type: choice
+        options: [dev, prod]
+        default: dev
+      confirm_prod:
+        description: "Type deploy-prod to allow target=prod."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: schema-infra-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: "152335099025"
 
 jobs:
-  inert:
+  deploy-dev:
+    name: deploy-dev
+    # workflow_run: only a successful push run of ci-required on main.
+    # workflow_dispatch: only from main (the OIDC trust is main-only).
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - run: echo "Deploy automation is disabled. Decision pending with Tom."
+      - name: Guard prod input
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod' && inputs.confirm_prod != 'deploy-prod'
+        run: |
+          echo "::error::target=prod needs confirm_prod=deploy-prod"
+          exit 1
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - name: Install CDK dependencies
+        run: npm ci
+        working-directory: cdk
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/SchemaInfraDeployDev
+          aws-region: us-west-2
+      - name: Deploy dev and smoke dev
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          LASTGIT_CI_OID: ${{ env.DEPLOY_SHA }}
+          LASTGIT_DEPLOY_SKIP_PROD: "1"
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+          SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
+          SCHEMA_BUILD_REMOTE_HOST: ""
+          LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+        run: bash .lastgit/deploy-pipeline.sh
+      - name: Keep the artifact for the prod job
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-artifact
+          path: ${{ runner.temp }}/artifacts
+          retention-days: 1
+
+  deploy-prod:
+    name: deploy-prod
+    needs: deploy-dev
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.target == 'prod'
+      && inputs.confirm_prod == 'deploy-prod'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - name: Install CDK dependencies
+        run: npm ci
+        working-directory: cdk
+      - uses: actions/download-artifact@v4
+        with:
+          name: schema-artifact
+          path: ${{ runner.temp }}/artifacts
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/SchemaInfraDeployProd
+          aws-region: us-east-1
+      - name: Deploy prod (10% canary pin) and smoke prod
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          LASTGIT_CI_OID: ${{ github.sha }}
+          SCHEMA_DEPLOY_SKIP_DEV: "1"
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+          SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
+          SCHEMA_BUILD_REMOTE_HOST: ""
+          LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+        run: bash .lastgit/deploy-pipeline.sh
+      - name: Canary state (manual promote or rollback needed)
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/deploy-state/canary-state.json"
+          if [ -f "$f" ]; then
+            echo "::warning::Prod canary is pinned. No ticker runs on GitHub yet. Promote or roll back by hand."
+            cat "$f"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prod-canary-state
+          path: ${{ runner.temp }}/deploy-state
+          if-no-files-found: ignore
+          retention-days: 14

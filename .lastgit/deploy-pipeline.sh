@@ -18,6 +18,9 @@
 # Env:
 #   DEPLOY_FREEZE=true           skip all
 #   LASTGIT_DEPLOY_SKIP_PROD=1   stop after successful dev smoke
+#   SCHEMA_DEPLOY_SKIP_DEV=1     skip the dev deploy + dev smoke (the GitHub
+#                                prod job runs after a dev job that did them,
+#                                with a different OIDC role per environment)
 #   CANARY_SOAK_HOURS=24         canary soak duration
 #   CANARY_WEIGHT=0.1            fraction of prod traffic on new version
 #   SCHEMA_CANARY_ALARM_NAMES    optional override; defaults to the required
@@ -117,18 +120,22 @@ CANARY_REFUSED=0
 
 if [ "$KIND" = "code-only" ]; then
   # ---------- CODE-ONLY: publish, never CDK ----------
-  echo "== STAGE 1: code-publish DEV =="
-  stage_started="$(schema_telemetry_stage_start dev_deploy)"
-  DEV_OUT="$(bash scripts/deploy/code-publish.sh dev us-west-2 "$MANIFEST")"
-  schema_telemetry_stage_end dev_deploy "$stage_started"
-  DEV_NEW_VER="$(printf '%s\n' "$DEV_OUT" | grep '^NEW_VERSION=' | cut -d= -f2)"
-  DEV_CODE_SHA="$(printf '%s\n' "$DEV_OUT" | grep '^CODE_SHA256=' | cut -d= -f2-)"
-  DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
+  if [ "${SCHEMA_DEPLOY_SKIP_DEV:-}" = "1" ]; then
+    echo "SCHEMA_DEPLOY_SKIP_DEV=1 — dev stages skipped (the caller deployed and smoked dev)"
+  else
+    echo "== STAGE 1: code-publish DEV =="
+    stage_started="$(schema_telemetry_stage_start dev_deploy)"
+    DEV_OUT="$(bash scripts/deploy/code-publish.sh dev us-west-2 "$MANIFEST")"
+    schema_telemetry_stage_end dev_deploy "$stage_started"
+    DEV_NEW_VER="$(printf '%s\n' "$DEV_OUT" | grep '^NEW_VERSION=' | cut -d= -f2)"
+    DEV_CODE_SHA="$(printf '%s\n' "$DEV_OUT" | grep '^CODE_SHA256=' | cut -d= -f2-)"
+    DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
 
-  echo "== STAGE 2: smoke DEV =="
-  stage_started="$(schema_telemetry_stage_start dev_smoke)"
-  bash ./scripts/deploy/smoke-dev.sh
-  schema_telemetry_stage_end dev_smoke "$stage_started"
+    echo "== STAGE 2: smoke DEV =="
+    stage_started="$(schema_telemetry_stage_start dev_smoke)"
+    bash ./scripts/deploy/smoke-dev.sh
+    schema_telemetry_stage_end dev_smoke "$stage_started"
+  fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
@@ -159,22 +166,26 @@ else
   # ensure-artifact) and the fastembed model Layer. A fresh scratch has no
   # layer yet — materialize it before --skip-build (release #2's failure).
   bash scripts/deploy/ensure-layer.sh
-  echo "== STAGE 1: deploy DEV (CDK, prebuilt artifact) =="
-  export AWS_REGION=us-west-2 AWS_DEFAULT_REGION=us-west-2
-  stage_started="$(schema_telemetry_stage_start dev_deploy)"
-  ./deploy.sh dev --yes --skip-build
-  schema_telemetry_stage_end dev_deploy "$stage_started"
-  DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
-  DEV_FN=$(schema_fn_name dev us-west-2 || true)
-  if [ -n "${DEV_FN:-}" ] && [ "$DEV_FN" != "None" ]; then
-    DEV_CODE_SHA="$(aws lambda get-function-configuration --function-name "$DEV_FN" \
-      --region us-west-2 --query 'CodeSha256' --output text 2>/dev/null || true)"
-  fi
+  if [ "${SCHEMA_DEPLOY_SKIP_DEV:-}" = "1" ]; then
+    echo "SCHEMA_DEPLOY_SKIP_DEV=1 — dev stages skipped (the caller deployed and smoked dev)"
+  else
+    echo "== STAGE 1: deploy DEV (CDK, prebuilt artifact) =="
+    export AWS_REGION=us-west-2 AWS_DEFAULT_REGION=us-west-2
+    stage_started="$(schema_telemetry_stage_start dev_deploy)"
+    ./deploy.sh dev --yes --skip-build
+    schema_telemetry_stage_end dev_deploy "$stage_started"
+    DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
+    DEV_FN=$(schema_fn_name dev us-west-2 || true)
+    if [ -n "${DEV_FN:-}" ] && [ "$DEV_FN" != "None" ]; then
+      DEV_CODE_SHA="$(aws lambda get-function-configuration --function-name "$DEV_FN" \
+        --region us-west-2 --query 'CodeSha256' --output text 2>/dev/null || true)"
+    fi
 
-  echo "== STAGE 2: smoke DEV =="
-  stage_started="$(schema_telemetry_stage_start dev_smoke)"
-  bash ./scripts/deploy/smoke-dev.sh
-  schema_telemetry_stage_end dev_smoke "$stage_started"
+    echo "== STAGE 2: smoke DEV =="
+    stage_started="$(schema_telemetry_stage_start dev_smoke)"
+    bash ./scripts/deploy/smoke-dev.sh
+    schema_telemetry_stage_end dev_smoke "$stage_started"
+  fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
