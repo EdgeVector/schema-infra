@@ -12,7 +12,7 @@
 #                    successful reason.
 #
 # Both deploying planes: DEV (us-west-2) → dev smoke → PROD (us-east-1) with
-# ~10% weighted canary on the `live` alias → prod smoke → soak state
+# CANARY_WEIGHT (default 5%) of the `live` alias → prod smoke → soak
 # (canary-ticker promotes after CANARY_SOAK_HOURS if alarms stay non-ALARM).
 #
 # Env:
@@ -22,7 +22,8 @@
 #                                prod job runs after a dev job that did them,
 #                                with a different OIDC role per environment)
 #   CANARY_SOAK_HOURS=24         canary soak duration
-#   CANARY_WEIGHT=0.1            fraction of prod traffic on new version
+#   CANARY_WEIGHT=0.05           fraction of prod traffic on new version
+#   CANARY_STATE_FROM_ALIAS=1    ticker reads the live alias (GitHub)
 #   SCHEMA_CANARY_ALARM_NAMES    optional override; defaults to the required
 #                                production mutation-gate alarm set
 #   SCHEMA_DEPLOY_FORCE_KIND     override the classifier (code-only|
@@ -138,9 +139,15 @@ if [ "$KIND" = "code-only" ]; then
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
+    printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
     exit 0
+  fi
+
+  if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
+    echo "== canary ticker before prod =="
+    bash "$(pwd)/.lastgit/canary-ticker.sh"
   fi
 
   echo "== STAGE 3: code-publish PROD + canary pin =="
@@ -188,9 +195,15 @@ else
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
+    printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
     exit 0
+  fi
+
+  if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
+    echo "== canary ticker before prod =="
+    bash "$(pwd)/.lastgit/canary-ticker.sh"
   fi
 
   echo "== STAGE 3: deploy PROD + canary pin =="

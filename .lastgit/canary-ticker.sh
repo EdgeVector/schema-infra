@@ -20,6 +20,12 @@ fi
 # shellcheck source=scripts/deploy/canary-lib.sh
 source "$ROOT/scripts/deploy/canary-lib.sh"
 
+# GitHub Actions has no durable local state file. The live alias is the record.
+if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
+  tick_alias_canaries
+  exit $?
+fi
+
 if [ ! -f "$STATE_FILE" ]; then
   exit 0
 fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit test: canary-lib pins AdditionalVersionWeights at CANARY_WEIGHT (default 0.1).
+# Unit test: canary-lib pins AdditionalVersionWeights at CANARY_WEIGHT (default 0.05).
 # Drives the real set_canary_weights* helpers with a mock `aws` on PATH — not a reimplementation.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -9,7 +9,7 @@ test -f "$LIB" || { echo "missing $LIB" >&2; exit 1; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export LASTGIT_DEPLOY_LOG_DIR="$TMP"
-export CANARY_WEIGHT=0.1
+unset CANARY_WEIGHT || true
 export PATH="$TMP/bin:$PATH"
 mkdir -p "$TMP/bin"
 
@@ -53,14 +53,14 @@ else
 fi
 
 test -s "$MOCK_AWS_UPDATE" || { echo "aws update-alias was not invoked" >&2; exit 1; }
-# Expect AdditionalVersionWeights={NEW=0.1}
+# Expect AdditionalVersionWeights={NEW=0.05} (the default live canary).
 if ! grep -q 'AdditionalVersionWeights={' "$MOCK_AWS_UPDATE"; then
   echo "missing AdditionalVersionWeights in:" >&2
   cat "$MOCK_AWS_UPDATE" >&2
   exit 1
 fi
-if ! grep -Eq 'AdditionalVersionWeights=\{[0-9.]+=0\.1\}' "$MOCK_AWS_UPDATE"; then
-  echo "expected weight 0.1, got:" >&2
+if ! grep -Eq 'AdditionalVersionWeights=\{[0-9.]+=0\.05\}' "$MOCK_AWS_UPDATE"; then
+  echo "expected weight 0.05, got:" >&2
   cat "$MOCK_AWS_UPDATE" >&2
   exit 1
 fi
@@ -128,6 +128,6 @@ if declare -f set_canary_weights >/dev/null && ! declare -f set_canary_weights_o
   : >"$MOCK_AWS_UPDATE"
   MOCK_MISSING_VERSION=31 set_canary_weights "SchemaFn" "us-east-1" "32" "33"
   grep -qx '32' "$MOCK_AWS_UPDATE" || { echo "primary must be the pre-deploy version 32:" >&2; cat "$MOCK_AWS_UPDATE" >&2; exit 1; }
-  grep -q 'AdditionalVersionWeights={33=0.1}' "$MOCK_AWS_UPDATE" || { echo "canary must be 33 at 0.1" >&2; exit 1; }
+  grep -q 'AdditionalVersionWeights={33=0.05}' "$MOCK_AWS_UPDATE" || { echo "canary must be 33 at 0.05" >&2; exit 1; }
 fi
 echo "ok canary-weight-pin $(basename "$ROOT")"

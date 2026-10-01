@@ -4,7 +4,7 @@
 set -euo pipefail
 
 CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
-CANARY_WEIGHT="${CANARY_WEIGHT:-0.1}"  # 10% of traffic ≈ "one box" for serverless
+CANARY_WEIGHT="${CANARY_WEIGHT:-0.05}"  # 5% of live prod traffic on the new version
 STATE_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-schema-infra}"
 STATE_FILE="${STATE_DIR}/canary-state.json"
 mkdir -p "$STATE_DIR"
@@ -61,7 +61,7 @@ version_exists() {
   aws lambda get-function --function-name "$fn:$ver" --region "$region" >/dev/null 2>&1
 }
 
-# After CDK points live → NEW 100%, re-pin: primary=OLD, 10% → NEW.
+# After CDK points live → NEW 100%, re-pin: primary=OLD, CANARY_WEIGHT → NEW.
 # OLD must be the version the live alias served BEFORE this deploy. It is the
 # only safe primary: any other version is code nobody chose to serve now.
 # Return codes:
@@ -165,7 +165,7 @@ state = {
   "region": region,
   "canary_started_at": started,
   "promote_after": promote,
-  "weight": float(__import__("os").environ.get("CANARY_WEIGHT", "0.1")),
+  "weight": float(__import__("os").environ.get("CANARY_WEIGHT", "0.05")),
 }
 with open(path, "w") as f:
   json.dump(state, f, indent=2)
@@ -213,5 +213,120 @@ canary_alarms_ok() {
       *) return 1 ;;
     esac
   done
+  return 0
+}
+
+# Plan one live alias from its routing config and LastModified.
+# stdout is one line:
+#   idle
+#   soaking <TAB> old <TAB> new <TAB> promote_after
+#   due     <TAB> old <TAB> new <TAB> promote_after
+# A weight other than CANARY_WEIGHT is idle. Another writer owns that shift.
+# CANARY_ALIAS_FIXTURE, when set, is a get-alias JSON file (tests).
+# CANARY_NOW overrides the clock (UTC, ISO-8601).
+canary_alias_plan() {
+  local fn="$1" region="$2" json
+  if [ -n "${CANARY_ALIAS_FIXTURE:-}" ]; then
+    json="$(cat "$CANARY_ALIAS_FIXTURE")"
+  else
+    json="$(aws lambda get-alias --function-name "$fn" --name live --region "$region" --output json 2>/dev/null || true)"
+  fi
+  [ -n "${json:-}" ] || { printf '%s\n' idle; return 0; }
+  # The heredoc is python's stdin, so the alias JSON goes in argv.
+  CANARY_SOAK_HOURS="$CANARY_SOAK_HOURS" CANARY_WEIGHT="$CANARY_WEIGHT" CANARY_NOW="${CANARY_NOW:-}" \
+    python3 - "$json" <<'PY'
+import json, os, sys
+from datetime import datetime, timedelta, timezone
+
+raw = sys.argv[1]
+try:
+    alias = json.loads(raw)
+except Exception:
+    print("idle")
+    raise SystemExit(0)
+weights = ((alias.get("RoutingConfig") or {}).get("AdditionalVersionWeights") or {})
+if len(weights) != 1:
+    print("idle")
+    raise SystemExit(0)
+new, weight = next(iter(weights.items()))
+want = float(os.environ.get("CANARY_WEIGHT", "0.05"))
+if abs(float(weight) - want) > 0.001:
+    print("idle")
+    raise SystemExit(0)
+old = str(alias.get("FunctionVersion") or "")
+if not old or old in ("$LATEST", "None") or old == str(new):
+    print("idle")
+    raise SystemExit(0)
+started = str(alias.get("LastModified") or "")
+s = started.replace("Z", "+00:00")
+if s.endswith("+0000"):
+    s = s[:-5] + "+00:00"
+try:
+    t0 = datetime.fromisoformat(s)
+except Exception:
+    print("idle")
+    raise SystemExit(0)
+if t0.tzinfo is None:
+    t0 = t0.replace(tzinfo=timezone.utc)
+hours = float(os.environ.get("CANARY_SOAK_HOURS", "24"))
+promote = t0 + timedelta(hours=hours)
+now_s = os.environ.get("CANARY_NOW") or ""
+if now_s:
+    now = datetime.fromisoformat(now_s.replace("Z", "+00:00"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+else:
+    now = datetime.now(timezone.utc)
+promote_s = promote.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+action = "due" if now >= promote else "soaking"
+print("%s\t%s\t%s\t%s" % (action, old, new, promote_s))
+PY
+}
+
+# GitHub ticker path. The live alias is the soak record: primary is the
+# previous version, AdditionalVersionWeights at CANARY_WEIGHT is the new
+# version, and LastModified plus CANARY_SOAK_HOURS is the promote time.
+# A runner-local canary-state.json does not survive the job.
+tick_alias_canaries() {
+  local region fn plan action old new promote saw=0 alarm=0
+  if [ "${DEPLOY_FREEZE:-}" = "true" ]; then
+    canary_log "ticker: DEPLOY_FREEZE — leave canary as-is"
+    return 0
+  fi
+  region="${CANARY_ALIAS_REGION:-us-east-1}"
+  if [ -n "${CANARY_ALIAS_FN:-}" ]; then
+    fn="$CANARY_ALIAS_FN"
+  else
+    fn="$(schema_fn_name prod "$region" || true)"
+  fi
+  if [ -z "${fn:-}" ] || [ "$fn" = "None" ]; then
+    canary_log "ticker: no prod function"
+    return 0
+  fi
+  plan="$(canary_alias_plan "$fn" "$region")"
+  IFS="$(printf '\t')" read -r action old new promote <<EOF
+$plan
+EOF
+  case "$action" in
+    soaking|due) saw=1 ;;
+    *)
+      canary_log "ticker: no staged canary on $fn"
+      return 0
+      ;;
+  esac
+  if ! canary_alarms_ok "$region"; then
+    alarm=1
+  fi
+  if [ "$alarm" -eq 1 ]; then
+    canary_log "ticker: ALARM — rolling back $fn to $old"
+    rollback_canary "$fn" "$region" "$old" || return 1
+    return 1
+  fi
+  if [ "$action" = "due" ]; then
+    promote_canary_full "$fn" "$region" "$new"
+    canary_log "ticker: PROMOTED $fn to 100% version=$new"
+    return 0
+  fi
+  canary_log "ticker: $fn still soaking until $promote (primary=$old canary=$new)"
   return 0
 }

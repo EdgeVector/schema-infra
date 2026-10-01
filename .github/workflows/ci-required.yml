@@ -2,8 +2,8 @@ name: ci-required
 
 # Merge gate for schema-infra. Runs the CDK compile and the CDK synth tests plus
 # the deploy-helper shell tests through .lastgit/ci.sh. This workflow NEVER
-# deploys and holds no AWS credentials. Deploy workflows stay workflow_dispatch
-# only (see .github/workflows/README.md).
+# deploys and holds no AWS credentials. Deploy is `.github/workflows/deploy.yml`
+# (see `.github/workflows/README.md`).
 on:
   pull_request:
     branches: [main]
