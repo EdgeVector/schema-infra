@@ -97,12 +97,12 @@ export class SchemaServiceStack extends Stack {
     );
     const envName = environment.name;
 
-    // Backend Sentry config, added to the request-path Lambda. The DSN is
-    // sourced from the OBS_SENTRY_DSN secret at synth time (deploy.sh exports
-    // it). Empty when unset, in which case `observability::init_lambda` leaves
-    // the Sentry sink off and CloudWatch logging is unchanged. Like the
-    // frontend's VITE_SENTRY_DSN it is a write-only client token, not a
-    // confidential secret, so a plaintext env var is appropriate.
+    // Backend Sentry config, added to the request-path Lambda. Prod deploy.sh
+    // loads OBS_SENTRY_DSN with `gh variable get` (echo off) and exports it
+    // only for this synth so it lands in the Lambda environment. Empty when
+    // the get fails or the variable is unset — no Sentry project is created
+    // here, and no DSN is invented. `observability::init_lambda` then leaves
+    // the Sentry sink off and CloudWatch logging is unchanged.
     //
     // OBS_SENTRY_RELEASE tags events with the exact deploy SHA/version, and
     // OBS_SENTRY_ENVIRONMENT separates dev/prod events in Sentry. The fold
