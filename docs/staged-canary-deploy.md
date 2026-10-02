@@ -10,7 +10,8 @@
    - Pin **5%** of prod `live` alias traffic on the new version (canary)
 3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
-   - If alarms ALARM anytime → **rollback** to previous version
+   - If alarms ALARM anytime → **rollback** to previous version, then open one GitHub issue labeled `schema-canary-rollback`
+   - A host-local routine (`scripts/deploy/file-canary-rollback-cards.sh`) files one kanban card from that issue. The GitHub runner never opens `folddb.sock` and never calls `kanban`.
    - The soak clock is the live alias `LastModified`. A runner-local state file is not the record.
 
 ## Previous version: retained, never substituted
@@ -42,6 +43,16 @@ Lambda is multi-tenant. **5% weighted alias traffic** is the live canary. Overri
 | `LASTGIT_DEPLOY_SKIP_PROD` | unset | Stop after successful dev smoke |
 | `DEPLOY_FREEZE` | unset | Skip deploys |
 | `SCHEMA_CANARY_ALARM_NAMES` | `schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod` | Prod soak alarms. Unset or empty still uses this pair — never a time-only gate. |
+| `SCHEMA_CANARY_OPEN_ISSUE` | unset (`0`) | Set to `1` on the GitHub ticker so an abort opens one `schema-canary-rollback` issue. |
+
+A missing named alarm fails the tick and leaves the alias in place. An empty `AdditionalVersionWeights` map means no canary is in flight: the tick exits 0. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
+
+Install the host-local card filer on a machine that can open the LastDB socket:
+
+```bash
+scripts/deploy/install-canary-rollback-card-launchd.sh install
+scripts/deploy/install-canary-rollback-card-launchd.sh status
+```
 
 ## R2-backed Schema Store
 

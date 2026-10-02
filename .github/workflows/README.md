@@ -16,7 +16,10 @@ GitHub is the gate of record for this repo since 2026-09-30.
   `SchemaInfraDeployDev`, `SchemaInfraDeployProd` (both trust
   `ref:refs/heads/main` only). Secrets: org `GH_PAT` only.
 - `canary-ticker.yml`: every 15 minutes. After 24 hours with the prod alarms
-  OK, it promotes the 5% canary to 100%. An ALARM rolls the alias back.
+  OK, it promotes the 5% canary to 100%. An ALARM rolls the alias back and
+  opens one GitHub issue labeled `schema-canary-rollback`. The runner never
+  calls `kanban`. A host-local routine files the card. Do not add an
+  `environment:` key.
 - `auto-deploy-on-fold.yml`: inert stub. Do not add a fold-triggered deploy
   without Tom.
 

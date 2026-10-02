@@ -14,7 +14,7 @@ fi
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
 for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
-  scripts/proof/*/*.sh tests/proof/*/*.sh; do
+  scripts/deploy/tests/*.sh scripts/proof/*/*.sh tests/proof/*/*.sh; do
   [ -e "$f" ] || continue
   echo "bash -n $f"
   bash -n "$f"
@@ -27,6 +27,9 @@ bash scripts/deploy/test-canary-weight-pin.sh
 bash scripts/deploy/test-canary-alias-tick.sh
 bash scripts/deploy/test-restore-last-oid.sh
 bash scripts/deploy/test-canary-alarm-gate.sh
+bash scripts/deploy/test-canary-rollback-issue.sh
+bash scripts/deploy/test-file-canary-rollback-cards.sh
+bash scripts/deploy/tests/test-canary-alarm-loop.sh
 bash scripts/deploy/test-canary-run-root.sh
 bash scripts/deploy/test-checkout-lock.sh
 bash scripts/deploy/test-prove-mutation-gate.sh
