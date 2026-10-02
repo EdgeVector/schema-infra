@@ -19,6 +19,11 @@ name: deploy
 # cdk/lib/schema-infra-oidc-stack.ts matches the ref claim
 # `repo:EdgeVector/schema-infra:ref:refs/heads/main` only, so the assume-role
 # call would fail.
+#
+# Optional repository variable OBS_SENTRY_DSN: deploy.sh calls
+# `gh variable get OBS_SENTRY_DSN` on prod. Do not put the value in a
+# step env map. Do not invent a DSN. A failed or unset get leaves the
+# Lambda DSN unset.
 on:
   workflow_run:
     workflows: [ci-required]

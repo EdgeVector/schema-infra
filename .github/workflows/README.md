@@ -14,7 +14,10 @@ GitHub is the gate of record for this repo since 2026-09-30.
   confirm_prod=deploy-prod) runs the same pair. Do not add an `environment:`
   key: it changes the OIDC `sub` claim and the IAM trust rejects it. Roles:
   `SchemaInfraDeployDev`, `SchemaInfraDeployProd` (both trust
-  `ref:refs/heads/main` only). Secrets: org `GH_PAT` only.
+  `ref:refs/heads/main` only). Secrets: org `GH_PAT` only. Optional
+  repository variable `OBS_SENTRY_DSN`: `deploy.sh` reads it with
+  `gh variable get` on prod and never prints it. Do not map it in a
+  step `env:` block. Do not invent a DSN. No Sentry project exists yet.
 - `canary-ticker.yml`: every 15 minutes. After 24 hours with the prod alarms
   OK, it promotes the 5% canary to 100%. An ALARM rolls the alias back.
 - `auto-deploy-on-fold.yml`: inert stub. Do not add a fold-triggered deploy
