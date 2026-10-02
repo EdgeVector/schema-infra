@@ -10,7 +10,11 @@
    - Pin **5%** of prod `live` alias traffic on the new version (canary)
 3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
-   - If alarms ALARM anytime → **rollback** to previous version
+   - If either prod alarm is ALARM → **rollback** live `FunctionVersion` to the previous version and clear `AdditionalVersionWeights`
+   - After a rollback the tick opens one GitHub issue labeled `schema-canary-rollback` and exits non-zero
+   - A host-local routine (`scripts/deploy/canary-rollback-card.sh`) files one kanban card from that issue. The GitHub runner cannot open the LastDB socket.
+   - A missing configured alarm fails the tick and does not change the alias
+   - An empty weight map means no canary is in flight: the tick exits 0
    - The soak clock is the live alias `LastModified`. A runner-local state file is not the record.
 
 ## Previous version: retained, never substituted
@@ -72,6 +76,10 @@ references to Secrets Manager.
 # Install or repair canary ticker, then verify the loaded script/log.
 .lastgit/install-canary-ticker-launchd.sh install
 .lastgit/install-canary-ticker-launchd.sh status
+
+# File kanban cards from schema-canary-rollback GitHub issues (LastDB host).
+.lastgit/install-canary-rollback-card-launchd.sh install
+.lastgit/install-canary-rollback-card-launchd.sh status
 
 # State / logs
 ls ~/.lastgit/deploy-schema-infra/

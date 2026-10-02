@@ -7,6 +7,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export LASTGIT_DEPLOY_LOG_DIR="$TMP/state"
 export PATH="$TMP/bin:$PATH"
+unset GH_TOKEN GITHUB_TOKEN || true
 mkdir -p "$TMP/bin"
 
 cat >"$TMP/bin/aws" <<'AWS'

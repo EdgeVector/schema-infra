@@ -198,7 +198,7 @@ A few representative routes:
 |----------|-------------|
 | `SCHEMAS_BUCKET` | S3 bucket name for schema blob storage |
 | `FASTEMBED_CACHE_DIR` | Path to pre-extracted fastembed model (provided by Lambda Layer) |
-| `OBS_SENTRY_DSN` | Optional Sentry project DSN exported before CDK synth/deploy; empty disables the Sentry sink |
+| `OBS_SENTRY_DSN` | Optional Sentry project DSN. `deploy.sh` reads it from GitHub Actions variable `OBS_SENTRY_DSN` when unset in process env; empty disables the Sentry sink. The value is never printed. |
 | `OBS_SENTRY_RELEASE` | Sentry release tag; `deploy.sh` defaults this to `schema-infra@<git-sha>` |
 | `OBS_SENTRY_ENVIRONMENT` | Sentry environment tag; `deploy.sh` defaults this to the deploy target (`dev` or `prod`) |
 

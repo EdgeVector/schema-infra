@@ -53,28 +53,29 @@ if [ "$STAGE" != "canary_soak" ]; then
   exit 0
 fi
 
-if ! canary_soak_elapsed "$PROMOTE_AFTER"; then
-  canary_log "ticker: still soaking until $PROMOTE_AFTER (oid=$OID)"
-  if ! canary_alarms_ok "$REGION"; then
-    canary_log "ticker: ALARM during soak — rolling back"
-    if [ -n "$OLD" ]; then
-      rollback_canary "$FN" "$REGION" "$OLD"
-    fi
-    clear_canary_state
-    exit 1
-  fi
-  exit 0
+if ! canary_alarms_present "$REGION"; then
+  canary_log "ticker: required alarm missing — move no alias"
+  exit 1
 fi
 
-canary_log "ticker: soak complete for oid=$OID — checking alarms"
-if ! canary_alarms_ok "$REGION"; then
-  canary_log "ticker: ALARM at promote time — rolling back"
+FIRING="$(canary_firing_alarms "$REGION" || true)"
+if [ -n "$FIRING" ]; then
+  ALARM_NAME="$(printf '%s\n' "$FIRING" | head -n 1)"
+  canary_log "ticker: ALARM $ALARM_NAME — rolling back"
   if [ -n "$OLD" ]; then
-    rollback_canary "$FN" "$REGION" "$OLD"
+    rollback_canary "$FN" "$REGION" "$OLD" || exit 1
+    canary_open_rollback_issue "$ALARM_NAME" "$FN" "$OLD" "$NEW"
   fi
   clear_canary_state
   exit 1
 fi
+
+if ! canary_soak_elapsed "$PROMOTE_AFTER"; then
+  canary_log "ticker: still soaking until $PROMOTE_AFTER (oid=$OID)"
+  exit 0
+fi
+
+canary_log "ticker: soak complete for oid=$OID — alarms OK, promoting"
 
 promote_canary_full "$FN" "$REGION" "$NEW"
 clear_canary_state

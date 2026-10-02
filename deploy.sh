@@ -5,6 +5,8 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=scripts/deploy/telemetry.sh
 source "$SCRIPT_DIR/scripts/deploy/telemetry.sh"
+# shellcheck source=scripts/deploy/sentry-dsn.sh
+source "$SCRIPT_DIR/scripts/deploy/sentry-dsn.sh"
 ENVIRONMENT="${1:-dev}"
 
 # Parse flags (after the first positional arg)
@@ -34,6 +36,7 @@ fi
 GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 export OBS_SENTRY_RELEASE="${OBS_SENTRY_RELEASE:-${OBS_RELEASE:-schema-infra@$GIT_SHA}}"
 export OBS_SENTRY_ENVIRONMENT="${OBS_SENTRY_ENVIRONMENT:-$ENVIRONMENT}"
+schema_load_obs_sentry_dsn
 
 echo "=== Deploying Schema Service Infrastructure ==="
 echo "Environment: $ENVIRONMENT"

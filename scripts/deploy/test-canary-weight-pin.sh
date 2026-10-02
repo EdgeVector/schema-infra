@@ -11,6 +11,7 @@ trap 'rm -rf "$TMP"' EXIT
 export LASTGIT_DEPLOY_LOG_DIR="$TMP"
 unset CANARY_WEIGHT || true
 export PATH="$TMP/bin:$PATH"
+unset GH_TOKEN GITHUB_TOKEN || true
 mkdir -p "$TMP/bin"
 
 # Mock aws: capture update-alias invocations; get-alias returns FunctionVersion
