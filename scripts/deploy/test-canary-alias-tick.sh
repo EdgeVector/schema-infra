@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The alias ticker soaks a 5% live weight for 24h, promotes when due, and
-# rolls back on ALARM. A 10% weight is left alone (another writer).
+# rolls back on ALARM. A 10% weight is a bad shape: fail, move no alias.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LIB="$ROOT/scripts/deploy/canary-lib.sh"
@@ -10,6 +10,7 @@ export LASTGIT_DEPLOY_LOG_DIR="$TMP/state"
 export CANARY_ALIAS_FN="SchemaFn"
 export CANARY_ALIAS_REGION="us-east-1"
 export PATH="$TMP/bin:$PATH"
+unset SCHEMA_CANARY_OPEN_ISSUE GH_TOKEN GITHUB_TOKEN || true
 mkdir -p "$TMP/bin" "$TMP/state"
 
 cat >"$TMP/alias.json" <<'EOF'
@@ -67,7 +68,16 @@ a["RoutingConfig"]["AdditionalVersionWeights"] = {"13": 0.10}
 json.dump(a, open(p, "w"))
 PY
 plan="$(CANARY_NOW=2026-10-02T00:00:00Z canary_alias_plan SchemaFn us-east-1)"
-[ "$plan" = "idle" ] || { echo "10% weight must be idle, got: $plan" >&2; exit 1; }
+[ "$plan" = "bad_shape" ] || { echo "10% weight must be bad_shape, got: $plan" >&2; exit 1; }
+: >"$MOCK_AWS_UPDATE"
+rc=0
+MOCK_ALARM_STATE=OK CANARY_NOW=2026-10-02T00:00:00Z tick_alias_canaries || rc=$?
+[ "$rc" -ne 0 ] || { echo "10% weight must fail the tick" >&2; exit 1; }
+if [ -s "$MOCK_AWS_UPDATE" ]; then
+  echo "10% weight must not change the alias:" >&2
+  cat "$MOCK_AWS_UPDATE" >&2
+  exit 1
+fi
 
 python3 - "$TMP/alias.json" <<'PY'
 import json, sys
@@ -93,6 +103,11 @@ MOCK_ALARM_STATE=ALARM CANARY_NOW=2026-10-01T12:00:00Z tick_alias_canaries || rc
 [ "$rc" -eq 1 ] || { echo "ALARM during soak must return 1, got $rc" >&2; exit 1; }
 grep -q 'function-version 12' "$MOCK_AWS_UPDATE" || {
   echo "rollback must target the primary version 12:" >&2
+  cat "$MOCK_AWS_UPDATE" >&2
+  exit 1
+}
+grep -q 'AdditionalVersionWeights={}' "$MOCK_AWS_UPDATE" || {
+  echo "rollback must clear the weight map:" >&2
   cat "$MOCK_AWS_UPDATE" >&2
   exit 1
 }

@@ -6,9 +6,11 @@ name: canary-ticker
 # This workflow is the old 15-minute launchd ticker. It reads the live alias.
 # LastModified plus 24 hours is the promote time. Alarms OK at that time
 # move the alias to 100% on the new version. ALARM at any tick rolls the
-# alias back to the previous version.
+# alias back to the previous version, then opens one GitHub issue labeled
+# schema-canary-rollback. A host-local routine files the kanban card.
+# This runner never opens folddb.sock and never calls kanban.
 #
-# A weight other than 0.05 is left alone.
+# A weight map that is not one key at 0.05 fails the tick and moves no alias.
 #
 # DO NOT add an `environment:` key. The prod role trusts
 # repo:EdgeVector/schema-infra:ref:refs/heads/main only.
@@ -20,6 +22,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 concurrency:
   group: schema-infra-canary-ticker
@@ -47,5 +50,8 @@ jobs:
           CANARY_STATE_FROM_ALIAS: "1"
           CANARY_RUN_ROOT_REFRESHED: "1"
           CANARY_SKIP_FETCH: "1"
+          SCHEMA_CANARY_OPEN_ISSUE: "1"
+          SCHEMA_CANARY_ISSUE_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
         run: bash .lastgit/canary-ticker.sh
