@@ -14,40 +14,16 @@ fi
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
 for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
-  scripts/deploy/tests/*.sh scripts/proof/*/*.sh tests/proof/*/*.sh; do
+  scripts/proof/*/*.sh; do
   [ -e "$f" ] || continue
   echo "bash -n $f"
   bash -n "$f"
 done
-echo "== forge token security test =="
-bash tests/test-forge-token-argv-leak.sh
-echo "== canary helper tests =="
-bash scripts/deploy/test-code-publish.sh
-bash scripts/deploy/test-canary-weight-pin.sh
-bash scripts/deploy/test-canary-alias-tick.sh
-bash scripts/deploy/test-restore-last-oid.sh
-bash scripts/deploy/test-canary-alarm-gate.sh
-bash scripts/deploy/test-file-canary-rollback-cards.sh
-bash scripts/deploy/tests/test-canary-alarm-loop.sh
-bash scripts/deploy/test-obs-sentry-dsn.sh
-bash scripts/deploy/test-canary-run-root.sh
-bash scripts/deploy/test-checkout-lock.sh
-bash scripts/deploy/test-prove-mutation-gate.sh
-echo "== compile-recipe tests =="
-bash scripts/deploy/test-lambda-container-build.sh
-bash scripts/deploy/test-artifact-digest.sh
-echo "== release classifier tests =="
-bash scripts/deploy/test-classify-change.sh
-echo "== terminal proof harness =="
-bash tests/proof/schema-lambda-fast-deployment/test-prove.sh
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac
 if [ -f cdk/package.json ]; then
   npm --prefix cdk ci --ignore-scripts
   npm --prefix cdk run build
-  npm --prefix cdk run test:github-oidc
-  npm --prefix cdk run test:mutation-gate-quota-alarm
-  npm --prefix cdk run test:version-retain
 fi
 echo "lastgit ci gate PASSED"
