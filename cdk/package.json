@@ -6,13 +6,10 @@
     },
     "scripts": {
         "build": "tsc",
-        "test:github-oidc": "ts-node test/github-oidc-synth.ts",
-        "test:mutation-gate-quota-alarm": "ts-node test/mutation-gate-quota-alarm-synth.ts",
         "watch": "tsc -w",
         "cdk": "cdk",
         "deploy": "cdk deploy",
-        "synth": "cdk synth",
-        "test:version-retain": "ts-node test/version-retain-synth.ts"
+        "synth": "cdk synth"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",

@@ -1,8 +1,0 @@
-{
-  "dev_smoke": "PASS",
-  "prod_smoke": "PASS",
-  "mutation_gate_alarms": "OK",
-  "weighted_canary": true,
-  "soak_promotion_recorded": true,
-  "secret_handling": "locator_only"
-}

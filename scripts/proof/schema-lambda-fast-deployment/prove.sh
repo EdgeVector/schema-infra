@@ -10,9 +10,6 @@
 #   scripts/proof/schema-lambda-fast-deployment/prove.sh --evidence-dir /path/to/evidence
 #   SCHEMA_LAMBDA_PROOF_EVIDENCE=/path/to/evidence \
 #     scripts/proof/schema-lambda-fast-deployment/prove.sh
-#
-# Fixture self-check:
-#   tests/proof/schema-lambda-fast-deployment/test-prove.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -142,9 +142,6 @@ report.
 # Operator (against a collected redacted evidence pack):
 scripts/proof/schema-lambda-fast-deployment/prove.sh \
   --evidence-dir /path/to/redacted-evidence
-
-# Harness self-check (CI; fixtures only — not live production PASS):
-tests/proof/schema-lambda-fast-deployment/test-prove.sh
 ```
 
 Details: [`scripts/proof/schema-lambda-fast-deployment/README.md`](scripts/proof/schema-lambda-fast-deployment/README.md).

@@ -634,9 +634,6 @@ def render_report(
         "scripts/proof/schema-lambda-fast-deployment/prove.sh "
         "--evidence-dir path/to/evidence"
     )
-    lines.append("")
-    lines.append("# Fixture self-check (CI):")
-    lines.append("tests/proof/schema-lambda-fast-deployment/test-prove.sh")
     lines.append("```")
     lines.append("")
     return "\n".join(lines)

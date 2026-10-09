@@ -64,25 +64,11 @@ All files are JSON under `--evidence-dir`:
 - each release `builds_for_digest` == **1**
 - code-only releases: `cdk_invoked=false`, `rust_compiled=false`
 
-## Fixture mode (CI / harness self-check)
+## Terminal validation
 
-Checked-in fixtures prove fail-closed and PASS paths without live AWS:
-
-```bash
-tests/proof/schema-lambda-fast-deployment/test-prove.sh
-```
-
-| Fixture | Expected |
-|---|---|
-| `fixtures/complete` | exit 0, report first line `PASS` |
-| `fixtures/incomplete` | exit ≠ 0, first line `FAIL` |
-| `fixtures/secret-bearing` | exit ≠ 0, first line `FAIL` |
-| `fixtures/digest-mismatch` | exit ≠ 0, first line `FAIL` |
-| no evidence dir | exit ≠ 0, first line `FAIL` |
-
-Complete fixtures are **synthetic** and only prove the harness gates. They are
-not production evidence. The North Star terminal validation card must run the
-operator command against a real redacted evidence pack collected from ten
+The harness fixtures and their self-check script were deleted with the tests
+(2026-10-09). The North Star terminal validation card must run the operator
+command against a real redacted evidence pack collected from ten
 representative releases.
 
 ## Collecting live evidence (outline)
