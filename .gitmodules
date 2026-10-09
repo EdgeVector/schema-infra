@@ -1,4 +1,4 @@
 [submodule "fold"]
 	path = fold
-	url = https://github.com/EdgeVector/fold.git
+	url = https://github.com/EdgeVector/lastdb.git
 	branch = main
