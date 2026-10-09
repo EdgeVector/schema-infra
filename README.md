@@ -80,13 +80,13 @@ schema-infra/
 │   ├── bin/               # CDK app entry point
 │   ├── lib/               # Stack definitions
 │   └── package.json       # CDK dependencies
-├── fold/                  # Lambda handler source (submodule → EdgeVector/fold monorepo)
+├── fold/                  # Lambda handler source (submodule → EdgeVector/lastdb monorepo)
 ├── frontend/              # Schema registry web UI
 ├── build.sh              # Build Lambda zip + fastembed Layer
 └── deploy.sh             # Deploy infrastructure
 ```
 
-Lambda handler source lives in the [`EdgeVector/fold`](https://github.com/EdgeVector/fold) monorepo (which contains `fold_db`, `schema_service`, and `fold_db_node` in one cargo workspace), vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` from the monorepo workspace root and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
+Lambda handler source lives in the [`EdgeVector/lastdb`](https://github.com/EdgeVector/lastdb) monorepo (which contains `fold_db`, `schema_service`, and `fold_db_node` in one cargo workspace), vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` from the monorepo workspace root and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
 
 ## Quick Start
 
@@ -173,7 +173,7 @@ Deploy to Vercel or another static hosting service.
 
 The Lambda serves the full `/v1/*` surface — 19 endpoints covering
 schemas, views, transforms, and system. See the machine-readable spec
-at [`fold/schema_service/openapi.yaml`](https://github.com/EdgeVector/fold/blob/main/schema_service/openapi.yaml).
+at [`fold/schema_service/openapi.yaml`](https://github.com/EdgeVector/lastdb/blob/main/schema_service/openapi.yaml).
 
 A few representative routes:
 
