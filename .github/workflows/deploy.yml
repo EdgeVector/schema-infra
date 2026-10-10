@@ -12,7 +12,7 @@ name: deploy
 # Prod pins 5% of the live alias on the new version (CANARY_WEIGHT=0.05).
 # canary-ticker.yml runs every 15 minutes. After 24 hours with alarms OK it
 # promotes to 100%. An ALARM rolls the alias back to the previous version.
-# The ticker reads the live alias. A runner has no durable state file.
+# The ticker reads the alias Description clock. A runner has no durable state file.
 #
 # DO NOT add an `environment:` key to any job. It changes the OIDC `sub`
 # claim to `environment:<name>`. The IAM trust in

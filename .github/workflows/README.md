@@ -3,7 +3,7 @@
 GitHub is the gate of record for this repo since 2026-09-30.
 
 - `ci-required.yml`: the merge gate. Required status check `ci-required`.
-  It runs `.lastgit/ci.sh` (shell syntax check and CDK build). Tests are
+  It runs `.lastgit/ci.sh` (shell and Python syntax checks and CDK build). Tests are
   deleted (2026-10-09). It does not deploy and has no AWS credentials.
 - `deploy.yml`: the deploy over GitHub OIDC (decision
   `decision-2026-09-30-prod-deploy-automation-github-oidc`, prod canary

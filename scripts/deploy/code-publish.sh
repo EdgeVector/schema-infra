@@ -98,6 +98,9 @@ else
         canary_alert "code-publish(prod): canary REFUSED — pre-publish live version ${OLD_VER} is missing; live alias untouched; new version $NEW_VER not routed"
         echo "CANARY_PIN=$CANARY_PIN"
         exit 1
+    elif [ "$PIN_RC" -ne 1 ]; then
+        canary_alert "code-publish(prod): canary clock or revision check failed; no fallback alias move"
+        exit 1
     else
         # No prior version to weight — put live fully on the new version,
         # same behavior as the CDK path's no-pin case.

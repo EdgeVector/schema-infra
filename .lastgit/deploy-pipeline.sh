@@ -258,6 +258,9 @@ else
         "new_code_sha256=${PROD_CODE_SHA:-}"
       canary_alert "prod canary REFUSED oid=$OID: pre-deploy live version $OLD_VER was deleted by the deploy; live is 100% on $NEW_VER with no soak and no rollback version. Check the CDK version RemovalPolicy."
     fi
+  elif [ "$PIN_RC" -ne 0 ] && [ "$PIN_RC" -ne 1 ]; then
+    canary_alert "prod canary clock or revision check failed oid=$OID; no weighted pin proof"
+    exit 1
   fi
 fi
 

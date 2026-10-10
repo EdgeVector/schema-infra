@@ -12,7 +12,9 @@
    - If soak elapsed and alarms OK → promote to **100%**
    - If alarms ALARM anytime → **rollback** to previous version, then open one GitHub issue labeled `schema-canary-rollback`
    - A host-local routine (`scripts/deploy/file-canary-rollback-cards.sh`) files one kanban card from that issue. The GitHub runner never opens `folddb.sock` and never calls `kanban`.
-   - The soak clock is the live alias `LastModified`. A runner-local state file is not the record.
+   - The alias `Description` stores the UTC start time, previous version, new version, and weight. The weighted alias update writes this proof.
+   - The GitHub ticker uses the alias `RevisionId` for each promotion or rollback. A concurrent alias change refuses the update.
+   - The AWS `get-alias` response has no `LastModified` field. A runner-local state file is not the record.
 
 ## Previous version: retained, never substituted
 
@@ -45,7 +47,7 @@ Lambda is multi-tenant. **5% weighted alias traffic** is the live canary. Overri
 | `SCHEMA_CANARY_ALARM_NAMES` | `schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod` | Prod soak alarms. Unset or empty still uses this pair — never a time-only gate. |
 | `SCHEMA_CANARY_OPEN_ISSUE` | unset (`0`) | Set to `1` on the GitHub ticker so an abort opens one `schema-canary-rollback` issue. |
 
-A missing named alarm fails the tick and leaves the alias in place. An empty `AdditionalVersionWeights` map means no canary is in flight: the tick exits 0. A weight map that is not one key at 0.05 fails the tick and leaves the alias in place. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
+A missing named alarm fails the tick and leaves the alias in place. Missing or mismatched clock proof fails a healthy tick and prevents promotion. An ALARM still rolls back a valid weighted alias without clock proof. An empty `AdditionalVersionWeights` map means no canary is in flight: the tick exits 0. A weight map that is not one key at 0.05 fails the tick and leaves the alias in place. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
 
 Install the host-local card filer on a machine that can open the LastDB socket:
 
@@ -87,3 +89,33 @@ references to Secrets Manager.
 # State / logs
 ls ~/.lastgit/deploy-schema-infra/
 ```
+
+
+## Adopt an existing canary without clock proof
+
+Use the exact pin time from the successful deploy log. Check the function,
+previous version, new version, and weight against the live alias. Do not use
+the version publish time or an estimated time. The adoption request keeps the
+version pair and weight, then adds the clock proof. Its revision check refuses
+a concurrent alias change. A description over 256 bytes refuses the request.
+The helper preserves the existing free text before its proof marker.
+
+For deploy run `37995202108`, the pin log records version `36`, canary `41`,
+weight `0.05`, and pin completion time `2026-10-09T22:01:43Z`. The live read on October 9
+confirms that pair. Recheck the live alias and the deploy log before adoption.
+
+```bash
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/schema-canary-adopt.XXXXXX")"
+fn=SchemaServiceStack-prod-SchemaServiceFnDF75D4BE-58KcDYig68xw
+aws lambda get-alias --function-name "$fn" --name live --region us-east-1 \
+  --output json > "$run_dir/alias.json"
+python3 scripts/deploy/canary-alias-state.py adopt --function-name "$fn" \
+  --old 36 --new 41 --weight 0.05 --started-at 2026-10-09T22:01:43Z \
+  < "$run_dir/alias.json" > "$run_dir/request.json"
+# Review request.json and the deploy evidence before this shared alias write.
+aws lambda update-alias --region us-east-1 \
+  --cli-input-json "file://$run_dir/request.json"
+```
+
+This procedure needs a separate action review. The code change does not adopt
+the existing canary or move the live alias.

@@ -4,7 +4,7 @@ name: canary-ticker
 #
 # The deploy workflow pins 5% of live traffic on the new Lambda version.
 # This workflow is the old 15-minute launchd ticker. It reads the live alias.
-# LastModified plus 24 hours is the promote time. Alarms OK at that time
+# Description stores the version pair and UTC start time. After 24 hours, alarms OK
 # move the alias to 100% on the new version. ALARM at any tick rolls the
 # alias back to the previous version, then opens one GitHub issue labeled
 # schema-canary-rollback. A host-local routine files the kanban card.

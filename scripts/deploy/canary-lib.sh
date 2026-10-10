@@ -7,6 +7,7 @@ CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
 CANARY_WEIGHT="${CANARY_WEIGHT:-0.05}"  # 5% of live prod traffic on the new version
 STATE_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-schema-infra}"
 STATE_FILE="${STATE_DIR}/canary-state.json"
+CANARY_ALIAS_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-alias-state.py"
 mkdir -p "$STATE_DIR"
 
 canary_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -71,8 +72,9 @@ version_exists() {
 #      so live stays on whatever it serves now (100% NEW after a CDK deploy).
 #      The caller must alert. Never substitute an older version: on
 #      2026-09-23 that put 90% of prod on 2026-09-01 code.
+#   3  REFUSED: alias read, clock proof, or revision-checked update failed.
 set_canary_weights() {
-  local fn="$1" region="$2" old_ver="$3" new_ver="$4"
+  local fn="$1" region="$2" old_ver="$3" new_ver="$4" alias_file request_file
   if [ -z "${new_ver:-}" ] || [ "$new_ver" = "None" ]; then
     canary_log "canary: no new version — skip pin"
     return 1
@@ -85,6 +87,19 @@ set_canary_weights() {
     canary_log "canary: REFUSED — pre-deploy live version old=$old_ver no longer exists; not pinning any other version; live alias left as is (new=$new_ver)"
     return 2
   fi
+  alias_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-alias.XXXXXX")"
+  request_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-pin.XXXXXX")"
+  if ! aws lambda get-alias --function-name "$fn" --name live --region "$region" \
+      --output json > "$alias_file"; then
+    canary_log "canary: REFUSED — cannot read the live alias before the pin"
+    return 3
+  fi
+  if ! python3 "$CANARY_ALIAS_HELPER" stage --function-name "$fn" \
+      --old "$old_ver" --new "$new_ver" --weight "$CANARY_WEIGHT" \
+      < "$alias_file" > "$request_file"; then
+    canary_log "canary: REFUSED — cannot store the clock and version proof; alias unchanged"
+    return 3
+  fi
   # Weighted routing is incompatible with provisioned concurrency on the alias.
   if aws lambda get-provisioned-concurrency-config \
       --function-name "$fn" --qualifier live --region "$region" >/dev/null 2>&1; then
@@ -92,13 +107,12 @@ set_canary_weights() {
     aws lambda delete-provisioned-concurrency-config \
       --function-name "$fn" --qualifier live --region "$region" >/dev/null 2>&1 || true
   fi
-  canary_log "canary: pin primary=$old_ver canary=$new_ver weight=$CANARY_WEIGHT"
-  aws lambda update-alias \
-    --function-name "$fn" \
-    --name live \
-    --function-version "$old_ver" \
-    --routing-config "AdditionalVersionWeights={${new_ver}=${CANARY_WEIGHT}}" \
-    --region "$region" >/dev/null
+  canary_log "canary: pin primary=$old_ver canary=$new_ver weight=$CANARY_WEIGHT with durable clock"
+  if ! aws lambda update-alias --cli-input-json "file://$request_file" \
+      --region "$region" >/dev/null; then
+    canary_log "canary: REFUSED — alias revision changed or AWS rejected the pin"
+    return 3
+  fi
   return 0
 }
 
@@ -117,21 +131,17 @@ canary_alert() {
 
 # Promote canary version to 100% (must clear routing weights).
 promote_canary_full() {
-  local fn="$1" region="$2" new_ver="$3"
-  [ -n "${new_ver:-}" ] || return 0
+  local fn="$1" region="$2" new_ver="$3" revision="${4:-}"
+  local revision_args=()
+  [ -n "${new_ver:-}" ] || return 1
+  [ -z "$revision" ] || revision_args=(--revision-id "$revision")
   canary_log "canary: promote 100% → version $new_ver (clear routing weights)"
-  if ! aws lambda update-alias \
-      --function-name "$fn" \
-      --name live \
-      --function-version "$new_ver" \
-      --routing-config "AdditionalVersionWeights={}" \
-      --region "$region" >/dev/null 2>&1; then
-    aws lambda update-alias \
-      --function-name "$fn" \
-      --name live \
-      --function-version "$new_ver" \
-      --region "$region" >/dev/null
-  fi
+  aws lambda update-alias \
+    --function-name "$fn" \
+    --name live \
+    --function-version "$new_ver" \
+    --routing-config "AdditionalVersionWeights={}" \
+    "${revision_args[@]}" --region "$region" >/dev/null
 }
 
 # Rollback: FunctionVersion stays the old version. Clear AdditionalVersionWeights.
@@ -140,7 +150,9 @@ promote_canary_full() {
 # Do not set FunctionVersion to the 0.05 key. Do not add a 0.95 weight key.
 # Do not pick a predecessor from list-versions-by-function.
 rollback_canary() {
-  local fn="$1" region="$2" old_ver="$3"
+  local fn="$1" region="$2" old_ver="$3" revision="${4:-}"
+  local revision_args=()
+  [ -z "$revision" ] || revision_args=(--revision-id "$revision")
   if ! version_exists "$fn" "$region" "$old_ver"; then
     canary_alert "canary ROLLBACK impossible: version $old_ver of $fn no longer exists; live alias left as is"
     return 1
@@ -151,7 +163,7 @@ rollback_canary() {
     --name live \
     --function-version "$old_ver" \
     --routing-config "AdditionalVersionWeights={}" \
-    --region "$region" >/dev/null
+    "${revision_args[@]}" --region "$region" >/dev/null
 }
 
 # Write canary state JSON (python for portable JSON).
@@ -258,8 +270,8 @@ open_canary_rollback_issue() {
 # Successful abort: pin FunctionVersion to old, clear weights, then open
 # one GitHub issue. Always return 1 so Actions marks the tick failed.
 abort_live_canary() {
-  local fn="$1" region="$2" old="$3" new="$4" alarm="$5"
-  rollback_canary "$fn" "$region" "$old" || return 1
+  local fn="$1" region="$2" old="$3" new="$4" alarm="$5" revision="${6:-}"
+  rollback_canary "$fn" "$region" "$old" "$revision" || return 1
   open_canary_rollback_issue "$alarm" "$fn" "$old" "$new" || true
   return 1
 }
@@ -309,80 +321,20 @@ canary_alarms_ok() {
   [ "$status" = "ok" ]
 }
 
-# Plan one live alias from its routing config and LastModified.
-# stdout is one line:
-#   idle
-#   bad_shape
-#   soaking <TAB> old <TAB> new <TAB> promote_after
-#   due     <TAB> old <TAB> new <TAB> promote_after
-# An empty weight map is idle. A weight map that is not one key at
-# CANARY_WEIGHT is bad_shape. CANARY_ALIAS_FIXTURE, when set, is a
-# get-alias JSON file (tests). CANARY_NOW overrides the clock (UTC, ISO-8601).
+# Read the real alias shape. The clock is version-bound proof in Description;
+# get-alias has no LastModified. Missing proof retains the pair for rollback.
+# stdout: ACTION<TAB>old<TAB>new<TAB>revision<TAB>promote_after.
 canary_alias_plan() {
   local fn="$1" region="$2" json
-  if [ -n "${CANARY_ALIAS_FIXTURE:-}" ]; then
-    json="$(cat "$CANARY_ALIAS_FIXTURE")"
-  else
-    json="$(aws lambda get-alias --function-name "$fn" --name live --region "$region" --output json 2>/dev/null || true)"
-  fi
-  [ -n "${json:-}" ] || { printf '%s\n' idle; return 0; }
-  # The heredoc is python's stdin, so the alias JSON goes in argv.
-  CANARY_SOAK_HOURS="$CANARY_SOAK_HOURS" CANARY_WEIGHT="$CANARY_WEIGHT" CANARY_NOW="${CANARY_NOW:-}" \
-    python3 - "$json" <<'PY'
-import json, os, sys
-from datetime import datetime, timedelta, timezone
-
-raw = sys.argv[1]
-try:
-    alias = json.loads(raw)
-except Exception:
-    print("idle")
-    raise SystemExit(0)
-weights = ((alias.get("RoutingConfig") or {}).get("AdditionalVersionWeights") or {})
-if len(weights) == 0:
-    print("idle")
-    raise SystemExit(0)
-if len(weights) != 1:
-    print("bad_shape")
-    raise SystemExit(0)
-new, weight = next(iter(weights.items()))
-want = float(os.environ.get("CANARY_WEIGHT", "0.05"))
-if abs(float(weight) - want) > 0.001:
-    print("bad_shape")
-    raise SystemExit(0)
-old = str(alias.get("FunctionVersion") or "")
-if not old or old in ("$LATEST", "None") or old == str(new):
-    print("idle")
-    raise SystemExit(0)
-started = str(alias.get("LastModified") or "")
-s = started.replace("Z", "+00:00")
-if s.endswith("+0000"):
-    s = s[:-5] + "+00:00"
-try:
-    t0 = datetime.fromisoformat(s)
-except Exception:
-    print("idle")
-    raise SystemExit(0)
-if t0.tzinfo is None:
-    t0 = t0.replace(tzinfo=timezone.utc)
-hours = float(os.environ.get("CANARY_SOAK_HOURS", "24"))
-promote = t0 + timedelta(hours=hours)
-now_s = os.environ.get("CANARY_NOW") or ""
-if now_s:
-    now = datetime.fromisoformat(now_s.replace("Z", "+00:00"))
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-else:
-    now = datetime.now(timezone.utc)
-promote_s = promote.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-action = "due" if now >= promote else "soaking"
-print("%s\t%s\t%s\t%s" % (action, old, new, promote_s))
-PY
+  json="$(aws lambda get-alias --function-name "$fn" --name live \
+    --region "$region" --output json)" || return 1
+  printf '%s\n' "$json" | python3 "$CANARY_ALIAS_HELPER" plan \
+    --weight "$CANARY_WEIGHT" --soak-hours "$CANARY_SOAK_HOURS"
 }
 
 # GitHub ticker path. The live alias is the soak record: primary is the
 # previous version, AdditionalVersionWeights at CANARY_WEIGHT is the new
-# version, and LastModified plus CANARY_SOAK_HOURS is the promote time.
+# version, and Description stores the pair and the UTC start time.
 # A runner-local canary-state.json does not survive the job.
 #
 # Abort order: describe both alarms first; a missing name fails before any
@@ -390,7 +342,7 @@ PY
 # deleted FunctionVersion fails; ALARM plus a valid canary rolls the alias
 # back, opens one GitHub issue, and exits non-zero.
 tick_alias_canaries() {
-  local region fn plan action old new promote inspect status firing
+  local region fn plan action old new revision promote inspect status firing
   if [ "${DEPLOY_FREEZE:-}" = "true" ]; then
     canary_log "ticker: DEPLOY_FREEZE — leave canary as-is"
     return 0
@@ -413,8 +365,11 @@ EOF
     canary_log "ticker: missing configured alarm — no alias change"
     return 1
   fi
-  plan="$(canary_alias_plan "$fn" "$region")"
-  IFS="$(printf '\t')" read -r action old new promote <<EOF
+  if ! plan="$(canary_alias_plan "$fn" "$region")"; then
+    canary_log "ticker: cannot read or validate the live alias — move no alias"
+    return 1
+  fi
+  IFS="$(printf '\t')" read -r action old new revision promote <<EOF
 $plan
 EOF
   case "$action" in
@@ -426,10 +381,10 @@ EOF
       canary_log "ticker: alias weight map is not empty and not one key at $CANARY_WEIGHT — move no alias"
       return 1
       ;;
-    soaking|due) ;;
+    unproven|soaking|due) ;;
     *)
-      canary_log "ticker: no staged canary on $fn"
-      return 0
+      canary_log "ticker: invalid canary plan — move no alias"
+      return 1
       ;;
   esac
   if ! version_exists "$fn" "$region" "$old"; then
@@ -438,10 +393,14 @@ EOF
   fi
   if [ "$status" = "alarm" ]; then
     canary_log "ticker: ALARM ($firing) — rolling back $fn to $old (was canary $new)"
-    abort_live_canary "$fn" "$region" "$old" "$new" "$firing" || return 1
+    abort_live_canary "$fn" "$region" "$old" "$new" "$firing" "$revision" || return 1
+  fi
+  if [ "$action" = "unproven" ]; then
+    canary_log "ticker: missing or mismatched canary clock proof (primary=$old canary=$new) — no promotion; ALARM rollback remains active"
+    return 1
   fi
   if [ "$action" = "due" ]; then
-    promote_canary_full "$fn" "$region" "$new"
+    promote_canary_full "$fn" "$region" "$new" "$revision" || return 1
     canary_log "ticker: PROMOTED $fn to 100% version=$new"
     return 0
   fi
