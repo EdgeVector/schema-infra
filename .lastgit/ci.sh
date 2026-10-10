@@ -19,6 +19,9 @@ for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
   echo "bash -n $f"
   bash -n "$f"
 done
+echo "== Python syntax =="
+PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/schema-python-compile" \
+  python3 -m py_compile scripts/deploy/canary-alias-state.py
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

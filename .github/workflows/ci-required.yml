@@ -1,6 +1,6 @@
 name: ci-required
 
-# Merge gate for schema-infra. Runs the shell syntax check and the CDK compile
+# Merge gate for schema-infra. Runs shell and Python syntax checks and the CDK compile
 # through .lastgit/ci.sh. This repo has no tests (deleted 2026-10-09). This
 # workflow NEVER deploys and holds no AWS credentials. Deploy is
 # `.github/workflows/deploy.yml` (see `.github/workflows/README.md`).
