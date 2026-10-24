@@ -584,6 +584,59 @@ exports.handler = async (event) => {
     }
 
     // =====================================================
+    // Route definitions — /v2 release registry.
+    //
+    // The Lambda implements v2 release-registry routes (apps/releases/
+    // channels/revocations). Without these gateway mounts, clients see
+    // APIGW `{"message":"Not Found"}` even though the Lambda handler
+    // exists.
+    // =====================================================
+    const v2Routes: Array<{
+      path: string;
+      methods: apigwv2.HttpMethod[];
+      integrationId: string;
+    }> = [
+      {
+        path: "/v2/apps",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "AppCreateIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "AppGetIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/releases",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "ReleasePublishIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/channels/{channel}",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+        integrationId: "ChannelIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/revocations",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "RevocationIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ReleaseGetIntegrationV2",
+      },
+    ];
+
+    for (const route of v2Routes) {
+      httpApi.addRoutes({
+        path: route.path,
+        methods: route.methods,
+        integration: lambdaIntegration(route.integrationId),
+      });
+    }
+
+    // =====================================================
     // Schema embeddings — DynamoDB table.
     // =====================================================
 

@@ -184,6 +184,30 @@ case "$code" in
     ;;
 esac
 
+# v2 release-registry anonymous GET routes must reach Lambda (not APIGW 404).
+# Lambda returns 404 for missing resources; APIGW {"message":"Not Found"} means the route was never mounted.
+for v2path in "/v2/apps/__smoke_missing_app__" \
+              "/v2/releases/__smoke_missing_release__" \
+              "/v2/apps/__smoke_missing_app__/channels/__smoke_missing_channel__"; do
+  code=$(curl -sS -m 20 -o /tmp/schema-v2-anon.out -w "%{http_code}" \
+    "${API_URL}${v2path}" || echo 000)
+  body=$(cat /tmp/schema-v2-anon.out 2>/dev/null || true)
+  case "$code" in
+    200|404|400)
+      if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+        echo "FAIL GET ${v2path} HTTP 404 APIGW missing-route (v2 route not mounted)"
+        fail=1
+      else
+        echo "OK   GET ${v2path} HTTP $code (mounted; Lambda response)"
+      fi
+      ;;
+    *)
+      echo "FAIL GET ${v2path} HTTP $code body=$(echo "$body" | cut -c1-120)"
+      fail=1
+      ;;
+  esac
+done
+
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)
