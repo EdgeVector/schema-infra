@@ -364,6 +364,12 @@ exports.handler = async (event) => {
         // for offline DevCert verification. With none, /v1/apps 401s
         // every cert and owner_app_id on /v1/schemas is a passthrough.
         APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
+        // App registry verifier pubkey (base64 Ed25519 public key) for
+        // compat row signature verification. Without it, POST
+        // /v2/releases/{release_id}/compat rejects every write. SSM
+        // parameter must be populated with the public key from
+        // EdgeVector/lastdb-verifier main config/verifier-key.json.
+        APP_REGISTRY_VERIFIER_PUBKEY: `{{resolve:ssm:/schema-service/${envName}/app-registry-verifier-pubkey}}`,
         // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
         // activates only when BOTH of the following are set:
         //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
@@ -608,8 +614,8 @@ exports.handler = async (event) => {
       },
       {
         path: "/v2/apps/{app_id}/releases",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "ReleasePublishIntegrationV2",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppReleasesIntegrationV2",
       },
       {
         path: "/v2/apps/{app_id}/channels/{channel}",
