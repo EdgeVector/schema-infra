@@ -3,8 +3,16 @@
 # Prevents a bad re-land from leaving dev down.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ENVIRONMENT="${1:-dev}"
 LAST_OID_FILE="${LASTGIT_DEPLOY_LOG_DIR}/last-deployed-oid"
+
+# NEVER touch prod - this is dev-only safety net
+if [ "$ENVIRONMENT" != "dev" ]; then
+    echo "ERROR: rollback-on-smoke-failure only runs on dev, not $ENVIRONMENT" >&2
+    exit 1
+fi
 
 if [ ! -f "$LAST_OID_FILE" ]; then
     echo "WARN: no last-deployed-oid found; cannot auto-rollback" >&2
@@ -23,11 +31,17 @@ if [ "$CURRENT_OID" = "$LAST_OID" ]; then
     exit 0
 fi
 
-echo "== Auto-rollback: reverting $ENVIRONMENT to last good deploy $LAST_OID =="
+echo "== Auto-rollback: reverting dev to last good deploy $LAST_OID =="
 git fetch origin "$LAST_OID"
 git checkout "$LAST_OID"
 
-# Re-run the deploy with the last good commit
-bash "$(dirname "$0")/../../deploy.sh" "$ENVIRONMENT" --skip-build
+# Update submodules to match the last good commit
+git submodule update --init --recursive
+
+# Rebuild the Lambda from the last good fold pin
+bash "$SCRIPT_DIR/../../build.sh" dev-release
+
+# Re-deploy with the freshly built artifact
+bash "$SCRIPT_DIR/../../deploy.sh" dev
 
 echo "Rollback to $LAST_OID complete"
