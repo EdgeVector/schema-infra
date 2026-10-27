@@ -41,10 +41,14 @@ if [ -z "${GH_PAT:-}" ]; then
 fi
 
 # Base64-encode the basic auth header for git (no global config, env-only)
+# actions/checkout@v5 already saved an http.https://github.com/.extraheader in .git/config
+# Clear it first (empty value) then add ours to avoid duplicate Authorization headers (GitHub 400)
 GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)"
-export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_COUNT=2
 export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
-export GIT_CONFIG_VALUE_0="$GIT_AUTH_HEADER"
+export GIT_CONFIG_VALUE_0=""
+export GIT_CONFIG_KEY_1="http.https://github.com/.extraheader"
+export GIT_CONFIG_VALUE_1="$GIT_AUTH_HEADER"
 
 # Work in a separate worktree so the original checkout stays intact for artifact upload
 WORKTREE_DIR="$(mktemp -d)"
@@ -53,7 +57,8 @@ trap 'rm -rf "$WORKTREE_DIR"' EXIT
 echo "Creating rollback worktree at $WORKTREE_DIR"
 
 # Fetch and create worktree at the rollback target
-git fetch --depth=1 origin "$ROLLBACK_TO"
+# Skip fetch if commit is already present (fetch-depth=0 in deploy.yml has all commits)
+git cat-file -e "$ROLLBACK_TO^{commit}" 2>/dev/null || git fetch --depth=1 origin "$ROLLBACK_TO"
 git worktree add "$WORKTREE_DIR" "$ROLLBACK_TO"
 
 cd "$WORKTREE_DIR"
