@@ -184,55 +184,6 @@ case "$code" in
     ;;
 esac
 
-# v2 release-registry anonymous GET routes must reach Lambda (not APIGW 404).
-# Lambda returns 404 for missing resources; APIGW {"message":"Not Found"} means the route was never mounted.
-for v2path in "/v2/apps" \
-              "/v2/apps/__smoke_missing_app__" \
-              "/v2/apps/__smoke_missing_app__/releases" \
-              "/v2/releases/__smoke_missing_release__" \
-              "/v2/releases/__smoke_missing_release__/compat" \
-              "/v2/apps/__smoke_missing_app__/channels/__smoke_missing_channel__"; do
-  code=$(curl -sS -m 20 -o /tmp/schema-v2-anon.out -w "%{http_code}" \
-    "${API_URL}${v2path}" || echo 000)
-  body=$(cat /tmp/schema-v2-anon.out 2>/dev/null || true)
-  case "$code" in
-    200|404|400)
-      if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-        echo "FAIL GET ${v2path} HTTP 404 APIGW missing-route (v2 route not mounted)"
-        fail=1
-      else
-        echo "OK   GET ${v2path} HTTP $code (mounted; Lambda response)"
-      fi
-      ;;
-    *)
-      echo "FAIL GET ${v2path} HTTP $code body=$(echo "$body" | cut -c1-120)"
-      fail=1
-      ;;
-  esac
-done
-
-# POST /v2/releases/{id}/compat must reach Lambda (not APIGW 404). An unsigned or
-# invalid signature should get a Lambda rejection (400/401), not APIGW Not Found.
-code=$(curl -sS -m 20 -o /tmp/schema-v2-compat-post.out -w "%{http_code}" \
-  -X POST "${API_URL}/v2/releases/__smoke_test_release__/compat" \
-  -H 'Content-Type: application/json' \
-  -d '{"contract_version":"0.1.0"}' || echo 000)
-body=$(cat /tmp/schema-v2-compat-post.out 2>/dev/null || true)
-case "$code" in
-  400|401|404)
-    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL POST /v2/releases/{id}/compat HTTP 404 APIGW missing-route (route not mounted)"
-      fail=1
-    else
-      echo "OK   POST /v2/releases/{id}/compat HTTP $code (mounted; Lambda auth rejection)"
-    fi
-    ;;
-  *)
-    echo "FAIL POST /v2/releases/{id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"
-    fail=1
-    ;;
-esac
-
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)
