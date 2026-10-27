@@ -35,9 +35,30 @@ fi
 
 echo "== Auto-rollback: reverting dev from $CURRENT_OID to last good deploy $ROLLBACK_TO =="
 
-# Fetch the old commit explicitly for shallow checkout compatibility
+# Configure git auth via env vars (scoped to this script, nothing persisted)
+# GH_PAT is provided by deploy.yml line 111 (dev) and line 198 (prod)
+if [ -z "${GH_PAT:-}" ]; then
+    echo "ERROR: GH_PAT not set; cannot fetch private submodule" >&2
+    exit 1
+fi
+
+# Base64-encode the basic auth header for git (no global config, env-only)
+GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)"
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+export GIT_CONFIG_VALUE_0="$GIT_AUTH_HEADER"
+
+# Work in a separate worktree so the original checkout stays intact for artifact upload
+WORKTREE_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORKTREE_DIR"' EXIT
+
+echo "Creating rollback worktree at $WORKTREE_DIR"
+
+# Fetch and create worktree at the rollback target
 git fetch --depth=1 origin "$ROLLBACK_TO"
-git checkout "$ROLLBACK_TO"
+git worktree add "$WORKTREE_DIR" "$ROLLBACK_TO"
+
+cd "$WORKTREE_DIR"
 
 # Get the fold submodule pin from this commit
 FOLD_PIN="$(git ls-tree HEAD fold | awk '{print $3}')"
@@ -49,18 +70,14 @@ fi
 echo "Fold pin for rollback: $FOLD_PIN"
 
 # Initialize fold submodule at the rolled-back commit's pin
-# Use the same credentials as the main checkout (GH_PAT env var)
-if [ -n "${GH_PAT:-}" ]; then
-    git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
-fi
-
+# GIT_CONFIG_* env vars are already set above for auth
 git submodule update --init --depth=1 fold
 cd fold
 git fetch --depth=1 origin "$FOLD_PIN"
 git checkout "$FOLD_PIN"
 cd ..
 
-echo "Submodule fold checked out at $FOLD_PIN"
+echo "Submodule fold checked out at $FOLD_PIN in worktree"
 
 # Rebuild the Lambda from the rolled-back fold pin
 bash "$SCRIPT_DIR/../../build.sh" dev-release
@@ -68,7 +85,8 @@ bash "$SCRIPT_DIR/../../build.sh" dev-release
 # Re-deploy dev with the freshly built artifact
 bash "$SCRIPT_DIR/../../deploy.sh" dev --yes
 
-# Record the successful rollback in last-deployed-oid so the artifact upload is correct
+# Record the successful rollback in last-deployed-oid in the ORIGINAL STATE_DIR
+# so the artifact upload reflects the actual deployed state
 printf '%s\n' "$ROLLBACK_TO" > "$LAST_OID_FILE"
 
-echo "Rollback to $ROLLBACK_TO complete and recorded in last-deployed-oid"
+echo "Rollback to $ROLLBACK_TO complete and recorded in original STATE_DIR"
