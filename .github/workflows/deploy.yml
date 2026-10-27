@@ -118,7 +118,7 @@ jobs:
           SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
       - name: Save dev last-deployed-oid
-        if: always() && hashFiles(format('{0}/deploy-state/last-deployed-oid', runner.temp)) != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: last-deployed-oid-dev
@@ -209,7 +209,7 @@ jobs:
           SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
       - name: Save prod last-deployed-oid
-        if: always() && hashFiles(format('{0}/deploy-state/last-deployed-oid', runner.temp)) != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: last-deployed-oid-prod
