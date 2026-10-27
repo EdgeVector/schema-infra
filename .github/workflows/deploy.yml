@@ -40,6 +40,11 @@ on:
         description: "Type deploy-prod to allow target=prod."
         type: string
         default: ""
+      force_kind:
+        description: "Force classification (infrastructure, code-only, or empty for auto)"
+        type: choice
+        options: ["", "infrastructure", "code-only"]
+        default: ""
 
 permissions:
   contents: read
@@ -109,6 +114,7 @@ jobs:
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+          SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
       - name: Record prod eligibility
         id: gate
@@ -190,6 +196,7 @@ jobs:
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+          SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
       - name: Save the prod oid for the next classifier
         if: success()

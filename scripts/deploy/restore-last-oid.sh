@@ -32,8 +32,11 @@ fi
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 current="${GITHUB_RUN_ID:-}"
 ids="$(mktemp)"
-gh run list --repo "$repo" --workflow deploy.yml --branch main --status success \
-  --limit 20 --json databaseId --jq '.[].databaseId' >"$ids"
+# Check both successful and failed runs: a failed run may have deployed
+# successfully but failed during smoke tests, leaving broken code live.
+gh run list --repo "$repo" --workflow deploy.yml --branch main \
+  --limit 30 --json databaseId,conclusion \
+  --jq '.[] | select(.conclusion == "success" or .conclusion == "failure") | .databaseId' >"$ids"
 
 while IFS= read -r id; do
   [ -z "$id" ] && continue
@@ -41,7 +44,7 @@ while IFS= read -r id; do
     continue
   fi
   tmp="$(mktemp -d)"
-  if gh run download "$id" --repo "$repo" --name last-deployed-oid --dir "$tmp"; then
+  if gh run download "$id" --repo "$repo" --name last-deployed-oid --dir "$tmp" 2>/dev/null; then
     if [ -s "$tmp/last-deployed-oid" ]; then
       cp "$tmp/last-deployed-oid" "$dest"
       echo "restore-last-oid: run $id"

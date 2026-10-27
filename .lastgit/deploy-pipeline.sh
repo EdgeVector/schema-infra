@@ -70,6 +70,11 @@ if [ "${SCHEMA_DEPLOY_SKIP_COALESCE:-}" != "1" ]; then
 fi
 
 # ---------- 0. Classify the change ----------
+# The last-deployed-oid records what was actually deployed, even if smoke
+# later failed. This ensures the classifier compares against the live Lambda
+# state, not the last fully successful run. Without this, a failed deploy that
+# went live (CDK succeeded, smoke failed) creates stale state, and the next
+# deploy may incorrectly classify as no-impact.
 LAST_OID_FILE="${STATE_DIR}/last-deployed-oid"
 BASE_OID=""
 [ -f "$LAST_OID_FILE" ] && BASE_OID="$(head -1 "$LAST_OID_FILE" | tr -d '[:space:]')"
@@ -139,6 +144,10 @@ if [ "$KIND" = "code-only" ]; then
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
+    # Record the deployed oid before stopping, since dev code-publish has
+    # already updated the live Lambda. If smoke later fails, the next run
+    # must compare against what is actually live.
+    printf '%s\n' "$OID" > "$LAST_OID_FILE"
     printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
@@ -167,6 +176,10 @@ if [ "$KIND" = "code-only" ]; then
   PROD_CANARY_EPOCH="$(schema_telemetry_epoch)"
   CDK_INVOKED=false
   NEW_VER="$PROD_NEW_VER"
+  # Record the deployed oid after prod code-publish and before smoke, since
+  # the Lambda is already live. If smoke fails, the next run must compare
+  # against what is actually deployed.
+  printf '%s\n' "$OID" > "$LAST_OID_FILE"
 else
   # ---------- INFRASTRUCTURE: CDK with the prebuilt artifact ----------
   # CDK reads two assets: the extracted Lambda zip (materialized by
@@ -195,6 +208,10 @@ else
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
+    # Record the deployed oid before stopping, since dev CDK has already
+    # updated the live Lambda. If smoke later fails, the next run must
+    # compare against what is actually live, not the last successful deploy.
+    printf '%s\n' "$OID" > "$LAST_OID_FILE"
     printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
@@ -223,7 +240,12 @@ else
   CDK_INVOKED=true
 fi
 
-echo "== STAGE 4: smoke PROD =="
+  # Record the deployed oid after prod CDK and before smoke, since the Lambda
+  # is already live. If smoke fails, the next run must compare against what
+  # is actually deployed, not the last successful deploy.
+  printf '%s\n' "$OID" > "$LAST_OID_FILE"
+
+  echo "== STAGE 4: smoke PROD =="
 stage_started="$(schema_telemetry_stage_start prod_smoke)"
 bash ./scripts/deploy/smoke-dev.sh prod
 schema_telemetry_stage_end prod_smoke "$stage_started"
@@ -302,7 +324,8 @@ schema_telemetry_emit release_row \
   "rust_compiled=false" \
   "builds_for_digest=1"
 
-printf '%s\n' "$OID" > "$LAST_OID_FILE"
+# last-deployed-oid was already written after CDK deploy (before smoke), so
+# we don't need to write it again here on success.
 if [ "${CANARY_REFUSED:-0}" = "1" ]; then
   # The release is live (100% on NEW) but unguarded. Fail the pipeline so the
   # deploy-pipeline status on the commit is red and a human looks.
