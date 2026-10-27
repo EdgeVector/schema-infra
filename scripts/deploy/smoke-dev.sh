@@ -198,6 +198,131 @@ if [ -n "$FN" ] && [ "$FN" != "None" ]; then
   fi
 fi
 
+# =====================================================
+# v2 release registry routes — smoke /v2/apps and /v2/releases/*
+# =====================================================
+
+# Anonymous GET /v2/apps (list all apps). Lambda returns [] or a JSON array.
+# APIGW `{"message":"Not Found"}` means the route was never mounted.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-apps-list.out -w "%{http_code}" \
+  "${API_URL}/v2/apps" || echo 000)
+body=$(cat /tmp/schema-v2-apps-list.out 2>/dev/null || true)
+case "$code" in
+  200)
+    if echo "$body" | grep -q '\['; then
+      echo "OK   /v2/apps HTTP 200 (route mounted, array returned)"
+    else
+      echo "FAIL /v2/apps: HTTP 200 but body is not a JSON array: $(echo "$body" | cut -c1-120)"
+      fail=1
+    fi
+    ;;
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL /v2/apps HTTP 404 APIGW missing-route (mount GET on /v2/apps)"
+    else
+      echo "FAIL /v2/apps HTTP 404 body=$(echo "$body" | cut -c1-120)"
+    fi
+    fail=1
+    ;;
+  *) echo "FAIL /v2/apps HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# GET /v2/apps/{app_id} must reach Lambda (404 or 200), never APIGW 404.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-app-get.out -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__" || echo 000)
+body=$(cat /tmp/schema-v2-app-get.out 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id} HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id} HTTP $code (mounted; Lambda 404 or app found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/apps/{app_id} HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/apps/{app_id}/releases must reach Lambda (200 or 404), never APIGW 404.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-app-releases.out -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__/releases" || echo 000)
+body=$(cat /tmp/schema-v2-app-releases.out 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id}/releases HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id}/releases HTTP $code (mounted; Lambda 404 or releases found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/apps/{app_id}/releases HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/releases/{release_id} must reach Lambda (404 or 200), never APIGW 404.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-get.out -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__" || echo 000)
+body=$(cat /tmp/schema-v2-release-get.out 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id} HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id} HTTP $code (mounted; Lambda 404 or release found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/releases/{release_id} HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/releases/{release_id}/compat must reach Lambda (200 or 404), never APIGW 404.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-compat-get.out -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__/compat" || echo 000)
+body=$(cat /tmp/schema-v2-release-compat-get.out 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda 404 or compat rows found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# POST /v2/releases/{release_id}/compat must reach Lambda (unsigned → 401/400/404, never APIGW 404).
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-compat-post.out -w "%{http_code}" \
+  -X POST "${API_URL}/v2/releases/__smoke_test_release__/compat" \
+  -H 'Content-Type: application/json' -d '{}' || echo 000)
+body=$(cat /tmp/schema-v2-release-compat-post.out 2>/dev/null || true)
+case "$code" in
+  400|401|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route (mount POST)"
+      fail=1
+    else
+      echo "OK   POST /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda auth/validation rejection)"
+    fi
+    ;;
+  *)
+    echo "FAIL POST /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
 if [ "$fail" -ne 0 ]; then
   echo "schema smoke-$ENVIRONMENT FAILED"
   exit 1
