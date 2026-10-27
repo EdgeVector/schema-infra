@@ -366,10 +366,10 @@ exports.handler = async (event) => {
         APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
         // App registry verifier pubkey (base64 Ed25519 public key) for
         // compat row signature verification. Without it, POST
-        // /v2/releases/{release_id}/compat rejects every write. SSM
-        // parameter must be populated with the public key from
-        // EdgeVector/lastdb-verifier main config/verifier-key.json.
-        APP_REGISTRY_VERIFIER_PUBKEY: `{{resolve:ssm:/schema-service/${envName}/app-registry-verifier-pubkey}}`,
+        // /v2/releases/{release_id}/compat rejects every write. Source:
+        // EdgeVector/lastdb-verifier main config/verifier-key.json,
+        // key_id 4b3cff29b464f4beb30796a607dda25e9a50cc0079b05356ca88431647bc39b1.
+        APP_REGISTRY_VERIFIER_PUBKEY: "UD8XYysPD4r31t0IcKKCQvkssaICPyrpV8RKdZ+eANY=",
         // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
         // activates only when BOTH of the following are set:
         //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
