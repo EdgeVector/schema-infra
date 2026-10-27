@@ -598,8 +598,8 @@ exports.handler = async (event) => {
     }> = [
       {
         path: "/v2/apps",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "AppCreateIntegrationV2",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppListCreateIntegrationV2",
       },
       {
         path: "/v2/apps/{app_id}",
@@ -625,6 +625,11 @@ exports.handler = async (event) => {
         path: "/v2/releases/{release_id}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "ReleaseGetIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}/compat",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "ReleaseCompatIntegrationV2",
       },
     ];
 

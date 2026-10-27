@@ -186,8 +186,10 @@ esac
 
 # v2 release-registry anonymous GET routes must reach Lambda (not APIGW 404).
 # Lambda returns 404 for missing resources; APIGW {"message":"Not Found"} means the route was never mounted.
-for v2path in "/v2/apps/__smoke_missing_app__" \
+for v2path in "/v2/apps" \
+              "/v2/apps/__smoke_missing_app__" \
               "/v2/releases/__smoke_missing_release__" \
+              "/v2/releases/__smoke_missing_release__/compat" \
               "/v2/apps/__smoke_missing_app__/channels/__smoke_missing_channel__"; do
   code=$(curl -sS -m 20 -o /tmp/schema-v2-anon.out -w "%{http_code}" \
     "${API_URL}${v2path}" || echo 000)
