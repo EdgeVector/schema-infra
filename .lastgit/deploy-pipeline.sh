@@ -136,13 +136,29 @@ if [ "$KIND" = "code-only" ]; then
     DEV_NEW_VER="$(printf '%s\n' "$DEV_OUT" | grep '^NEW_VERSION=' | cut -d= -f2)"
     DEV_CODE_SHA="$(printf '%s\n' "$DEV_OUT" | grep '^CODE_SHA256=' | cut -d= -f2-)"
     DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
+    
+    # Save previous oid before updating last-deployed-oid (for rollback on smoke failure)
+    PREVIOUS_OID_FILE="${STATE_DIR}/previous-deployed-oid"
+    if [ -f "$LAST_OID_FILE" ]; then
+      cp "$LAST_OID_FILE" "$PREVIOUS_OID_FILE"
+    fi
+    
     # Record dev deployment before smoke so it's captured even if smoke fails.
     # The workflow uploads this as an artifact with if: always().
     printf '%s\n' "$OID" > "$LAST_OID_FILE"
 
     echo "== STAGE 2: smoke DEV =="
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
-    bash ./scripts/deploy/smoke-dev.sh
+    if ! bash ./scripts/deploy/smoke-dev.sh; then
+      echo "ERROR: Dev smoke tests failed" >&2
+      # Capture CloudWatch logs before rollback
+      bash ./scripts/deploy/capture-lambda-logs.sh dev us-west-2 || true
+      # Auto-rollback dev to previous good deployment
+      bash ./scripts/deploy/rollback-on-smoke-failure.sh dev || true
+      # Still exit 1 so deploy-prod job is skipped
+      schema_telemetry_stage_end dev_smoke "$stage_started"
+      exit 1
+    fi
     schema_telemetry_stage_end dev_smoke "$stage_started"
   fi
 
