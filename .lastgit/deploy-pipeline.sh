@@ -136,6 +136,9 @@ if [ "$KIND" = "code-only" ]; then
     DEV_NEW_VER="$(printf '%s\n' "$DEV_OUT" | grep '^NEW_VERSION=' | cut -d= -f2)"
     DEV_CODE_SHA="$(printf '%s\n' "$DEV_OUT" | grep '^CODE_SHA256=' | cut -d= -f2-)"
     DEV_LIVE_EPOCH="$(schema_telemetry_epoch)"
+    # Record dev deployment before smoke so it's captured even if smoke fails.
+    # The workflow uploads this as an artifact with if: always().
+    printf '%s\n' "$OID" > "$LAST_OID_FILE"
 
     echo "== STAGE 2: smoke DEV =="
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
@@ -144,10 +147,7 @@ if [ "$KIND" = "code-only" ]; then
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
-    # Record the deployed oid before stopping, since dev code-publish has
-    # already updated the live Lambda. If smoke later fails, the next run
-    # must compare against what is actually live.
-    printf '%s\n' "$OID" > "$LAST_OID_FILE"
+    # last-deployed-oid already written after dev deploy, before smoke.
     printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
@@ -200,6 +200,9 @@ else
       DEV_CODE_SHA="$(aws lambda get-function-configuration --function-name "$DEV_FN" \
         --region us-west-2 --query 'CodeSha256' --output text 2>/dev/null || true)"
     fi
+    # Record dev deployment before smoke so it's captured even if smoke fails.
+    # The workflow uploads this as an artifact with if: always().
+    printf '%s\n' "$OID" > "$LAST_OID_FILE"
 
     echo "== STAGE 2: smoke DEV =="
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
@@ -208,10 +211,7 @@ else
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
-    # Record the deployed oid before stopping, since dev CDK has already
-    # updated the live Lambda. If smoke later fails, the next run must
-    # compare against what is actually live, not the last successful deploy.
-    printf '%s\n' "$OID" > "$LAST_OID_FILE"
+    # last-deployed-oid already written after dev deploy, before smoke.
     printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
     echo "LASTGIT_DEPLOY_SKIP_PROD — stop after dev smoke"
     echo "lastgit schema deploy-pipeline PASSED (dev only)"
