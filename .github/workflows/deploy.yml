@@ -40,6 +40,11 @@ on:
         description: "Type deploy-prod to allow target=prod."
         type: string
         default: ""
+      force_kind:
+        description: "Force classification (infrastructure, code-only, or empty for auto)"
+        type: choice
+        options: ["", "infrastructure", "code-only"]
+        default: ""
 
 permissions:
   contents: read
@@ -99,6 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+          DEPLOY_ENV: dev
         run: bash scripts/deploy/restore-last-oid.sh
       - name: Deploy dev and smoke dev
         env:
@@ -109,7 +115,16 @@ jobs:
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+          SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
+      - name: Save dev last-deployed-oid
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-deployed-oid-dev
+          path: ${{ runner.temp }}/deploy-state/last-deployed-oid
+          retention-days: 90
+          if-no-files-found: ignore
       - name: Record prod eligibility
         id: gate
         if: success()
@@ -175,6 +190,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+          DEPLOY_ENV: prod
         run: bash scripts/deploy/restore-last-oid.sh
       - name: Deploy prod (5% canary) and smoke prod
         env:
@@ -190,12 +206,13 @@ jobs:
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
           SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
+          SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
-      - name: Save the prod oid for the next classifier
-        if: success()
+      - name: Save prod last-deployed-oid
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: last-deployed-oid
+          name: last-deployed-oid-prod
           path: ${{ runner.temp }}/deploy-state/last-deployed-oid
           if-no-files-found: ignore
           retention-days: 90

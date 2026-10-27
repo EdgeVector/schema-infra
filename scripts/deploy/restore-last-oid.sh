@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Restore the last prod git oid into $LASTGIT_DEPLOY_LOG_DIR/last-deployed-oid.
+# Restore the last deployed git oid into $LASTGIT_DEPLOY_LOG_DIR/last-deployed-oid.
 #
-# The Mac watcher kept this file under ~/.lastgit. A GitHub runner does not.
-# The prod job uploads an artifact named last-deployed-oid. The next deploy
-# downloads the newest successful one so classify-change.sh can skip a
-# no-impact diff. A missing artifact is not an error: the classifier then
-# takes the conservative full path.
+# Downloads the newest last-deployed-oid-{dev,prod} artifact from successful or
+# failed runs (failed runs may have deployed successfully but failed smoke). Each
+# environment has its own artifact and baseline to prevent dev-only deploys from
+# becoming prod's classifier base. A missing artifact is not an error: the
+# classifier then takes the conservative full path.
 #
-# LAST_DEPLOYED_OID_FILE, when set, is copied and GitHub is not called.
+# Env:
+#   DEPLOY_ENV               dev or prod (required)
+#   LAST_DEPLOYED_OID_FILE   when set, copied instead of downloading (for tests)
 set -euo pipefail
 
 dir="${LASTGIT_DEPLOY_LOG_DIR:?LASTGIT_DEPLOY_LOG_DIR is required}"
+env="${DEPLOY_ENV:?DEPLOY_ENV is required (dev or prod)}"
 mkdir -p "$dir"
 dest="$dir/last-deployed-oid"
 
@@ -31,9 +34,13 @@ fi
 
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 current="${GITHUB_RUN_ID:-}"
+artifact_name="last-deployed-oid-${env}"
 ids="$(mktemp)"
-gh run list --repo "$repo" --workflow deploy.yml --branch main --status success \
-  --limit 20 --json databaseId --jq '.[].databaseId' >"$ids"
+# Check both successful and failed runs: a failed run may have deployed
+# successfully but failed during smoke tests, leaving broken code live.
+gh run list --repo "$repo" --workflow deploy.yml --branch main \
+  --limit 30 --json databaseId,conclusion \
+  --jq '.[] | select(.conclusion == "success" or .conclusion == "failure") | .databaseId' >"$ids"
 
 while IFS= read -r id; do
   [ -z "$id" ] && continue
@@ -41,14 +48,14 @@ while IFS= read -r id; do
     continue
   fi
   tmp="$(mktemp -d)"
-  if gh run download "$id" --repo "$repo" --name last-deployed-oid --dir "$tmp"; then
+  if gh run download "$id" --repo "$repo" --name "$artifact_name" --dir "$tmp" 2>/dev/null; then
     if [ -s "$tmp/last-deployed-oid" ]; then
       cp "$tmp/last-deployed-oid" "$dest"
-      echo "restore-last-oid: run $id"
+      echo "restore-last-oid ($env): run $id"
       exit 0
     fi
   fi
 done <"$ids"
 
-echo "restore-last-oid: no prior artifact"
+echo "restore-last-oid ($env): no prior artifact"
 exit 0
