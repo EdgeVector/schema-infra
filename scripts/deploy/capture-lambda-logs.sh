@@ -40,14 +40,15 @@ START_TIME=$(($(date +%s) - 600))000  # 10 minutes ago in milliseconds
 
 # Pull log events and redact secret-shaped values
 # Don't hide AWS errors with 2>/dev/null - print them but don't fail
+# Capture exit code with || pattern to avoid set -e early exit
+LOGS_RC=0
 LOGS_OUTPUT=$(aws logs filter-log-events \
     --log-group-name "$LOG_GROUP" \
     --start-time "$START_TIME" \
     --limit "$EVENT_LIMIT" \
     --region "$REGION" \
-    --output json 2>&1)
+    --output json 2>&1) || LOGS_RC=$?
 
-LOGS_RC=$?
 if [ $LOGS_RC -ne 0 ]; then
     # Redact secrets from error message before printing
     echo "WARN: aws logs filter-log-events failed (exit $LOGS_RC):" >&2

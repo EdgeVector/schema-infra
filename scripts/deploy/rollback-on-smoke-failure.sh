@@ -3,8 +3,6 @@
 # Prevents a bad re-land from leaving dev down.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 ENVIRONMENT="${1:-dev}"
 PREVIOUS_OID_FILE="${LASTGIT_DEPLOY_LOG_DIR}/previous-deployed-oid"
 LAST_OID_FILE="${LASTGIT_DEPLOY_LOG_DIR}/last-deployed-oid"
@@ -79,11 +77,33 @@ cd ..
 
 echo "Submodule fold checked out at $FOLD_PIN in worktree"
 
-# Rebuild the Lambda from the rolled-back fold pin
-bash "$SCRIPT_DIR/../../build.sh" dev-release
+# Re-deploy dev from the worktree (deploy.sh already builds; no separate build.sh call)
+# All paths (fold, build artifacts, etc.) resolve inside the worktree at the old pin
+bash "$WORKTREE_DIR/deploy.sh" dev --yes
 
-# Re-deploy dev with the freshly built artifact
-bash "$SCRIPT_DIR/../../deploy.sh" dev --yes
+# Health check: verify dev /v1/health returns 200 before recording the rollback
+HEALTH_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com/v1/health"
+HEALTH_TIMEOUT=30
+HEALTH_RETRIES=5
+HEALTH_OK=false
+
+echo "Checking health endpoint $HEALTH_URL (retries: $HEALTH_RETRIES, timeout: ${HEALTH_TIMEOUT}s)"
+for i in $(seq 1 $HEALTH_RETRIES); do
+    if curl --silent --fail --max-time "$HEALTH_TIMEOUT" "$HEALTH_URL" > /dev/null 2>&1; then
+        echo "Health check passed on attempt $i"
+        HEALTH_OK=true
+        break
+    else
+        echo "Health check failed on attempt $i, retrying..."
+        sleep 2
+    fi
+done
+
+if [ "$HEALTH_OK" = false ]; then
+    echo "ERROR: Health check never recovered after rollback to $ROLLBACK_TO" >&2
+    echo "Not recording rollback in last-deployed-oid; manual intervention required" >&2
+    exit 1
+fi
 
 # Record the successful rollback in last-deployed-oid in the ORIGINAL STATE_DIR
 # so the artifact upload reflects the actual deployed state
