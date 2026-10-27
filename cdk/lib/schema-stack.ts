@@ -295,6 +295,7 @@ exports.handler = async (event) => {
       code: lambda.Code.fromAsset(
         "../fold/target/lambda/server_lambda-extracted",
       ),
+      architecture: lambda.Architecture.X86_64,
       layers: [fastembedLayer],
       // Keep every published version when CDK replaces `currentVersion`.
       // Without this, CloudFormation deletes the previous version at the
@@ -364,6 +365,13 @@ exports.handler = async (event) => {
         // for offline DevCert verification. With none, /v1/apps 401s
         // every cert and owner_app_id on /v1/schemas is a passthrough.
         APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
+        // App registry verifier pubkey (base64 Ed25519 public key) for
+        // compat row signature verification. Without it, POST
+        // /v2/releases/{release_id}/compat rejects every write with
+        // VerifierNotConfigured. Source: EdgeVector/lastdb-verifier
+        // main config/verifier-key.json, key_id 4b3cff29b464f4beb30796a607dda25e9a50cc0079b05356ca88431647bc39b1.
+        // Standard base64 of the raw 32 Ed25519 public key bytes.
+        APP_REGISTRY_VERIFIER_PUBKEY: "UD8XYysPD4r31t0IcKKCQvkssaICPyrpV8RKdZ+eANY=",
         // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
         // activates only when BOTH of the following are set:
         //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
@@ -576,6 +584,64 @@ exports.handler = async (event) => {
     ];
 
     for (const route of v1Routes) {
+      httpApi.addRoutes({
+        path: route.path,
+        methods: route.methods,
+        integration: lambdaIntegration(route.integrationId),
+      });
+    }
+
+    // =====================================================
+    // Route definitions — /v2 release registry.
+    //
+    // The Lambda implements v2 release-registry routes (apps/releases/
+    // channels/revocations/compat). Without these gateway mounts, clients
+    // see APIGW `{"message":"Not Found"}` even though the Lambda handler
+    // exists in dispatch.rs:dispatch_apps().
+    // =====================================================
+    const v2Routes: Array<{
+      path: string;
+      methods: apigwv2.HttpMethod[];
+      integrationId: string;
+    }> = [
+      {
+        path: "/v2/apps",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppListCreateIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "AppGetIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/releases",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppReleasesIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/channels/{channel}",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+        integrationId: "ChannelIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/revocations",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "RevocationIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ReleaseGetIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}/compat",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "ReleaseCompatIntegrationV2",
+      },
+    ];
+
+    for (const route of v2Routes) {
       httpApi.addRoutes({
         path: route.path,
         methods: route.methods,

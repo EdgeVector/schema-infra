@@ -13,6 +13,11 @@ esac
 REGION="${AWS_REGION:-$DEFAULT_REGION}"
 STACK="SchemaServiceStack-$ENVIRONMENT"
 
+# Per-run evidence directory (AGENTS.md requirement)
+EVIDENCE_ROOT="${LAST_STACK_EVIDENCE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/last-stack/artifacts/schema-infra}"
+SMOKE_RUN_DIR="$EVIDENCE_ROOT/smoke-$(date +%Y%m%d-%H%M%S)-$$"
+mkdir -p "$SMOKE_RUN_DIR"
+
 API_URL=$(aws cloudformation describe-stacks \
   --stack-name "$STACK" \
   --region "$REGION" \
@@ -62,7 +67,7 @@ for path in /v1/views /v1/transforms /api/schemas; do
 done
 
 # Shared-only must be mounted (auth may 401/403 without key — not APIGW 404)
-code=$(curl -sS -m 20 -o /tmp/schema-shared-only.out -w "%{http_code}" \
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-shared-only.out" -w "%{http_code}" \
   "${API_URL}/v1/snapshot/shared-only" || echo 000)
 case "$code" in
   200|401|403) echo "OK   /v1/snapshot/shared-only HTTP $code (mounted)" ;;
@@ -90,7 +95,7 @@ if [ "$ENVIRONMENT" = "prod" ]; then
      [ -n "$DOMAIN_TARGET" ] && [ "$DOMAIN_TARGET" != "None" ]; then
     code=$(curl -sS -m 20 \
       --connect-to "${DOMAIN}:443:${DOMAIN_TARGET}:443" \
-      -o /tmp/schema-shared-only-domain.out \
+      -o "$SMOKE_RUN_DIR/schema-shared-only-domain.out" \
       -w "%{http_code}" \
       "https://${DOMAIN}/v1/snapshot/shared-only" || echo 000)
     case "$code" in
@@ -109,7 +114,7 @@ fi
 
 # Schema resolve must be mounted. This is a public read/dedupe route used by
 # fresh Mini nodes during first app-schema declaration; APIGW 404 breaks init.
-code=$(curl -sS -m 20 -o /tmp/schema-resolve.out -w "%{http_code}" \
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-resolve.out" -w "%{http_code}" \
   -X POST "${API_URL}/v1/schemas/resolve" \
   -H 'Content-Type: application/json' \
   -d '{"client_registry_version":null,"proposals":[]}' || echo 000)
@@ -125,7 +130,7 @@ esac
 # PoW clients must be able to obtain the stateless mutation challenge. An
 # empty payload is intentionally invalid, but must reach Lambda (400), not the
 # API Gateway missing-route response (404).
-code=$(curl -sS -m 20 -o /tmp/schema-mutation-challenge.out -w "%{http_code}" \
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-mutation-challenge.out" -w "%{http_code}" \
   -X POST "${API_URL}/v1/schemas/mutation-challenge" \
   -H 'Content-Type: application/json' -d '{}' || echo 000)
 case "$code" in
@@ -140,9 +145,9 @@ esac
 # Public app shelf (lastdb app list). Lambda returns the promoted, non-revoked
 # array. APIGW `{"message":"Not Found"}` means GET was never mounted on /v1/apps
 # (POST-only was the long-standing bug after fold #682).
-code=$(curl -sS -m 20 -o /tmp/schema-apps-list.out -w "%{http_code}" \
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-apps-list.out" -w "%{http_code}" \
   "${API_URL}/v1/apps" || echo 000)
-body=$(cat /tmp/schema-apps-list.out 2>/dev/null || true)
+body=$(cat "$SMOKE_RUN_DIR/schema-apps-list.out" 2>/dev/null || true)
 case "$code" in
   200)
     if echo "$body" | grep -q '\['; then
@@ -165,10 +170,10 @@ esac
 
 # PUT /v1/apps/{app_id} must reach Lambda (cert-gated), not APIGW 404.
 # Empty body without cert → Lambda 401/400; never gateway {"message":"Not Found"}.
-code=$(curl -sS -m 20 -o /tmp/schema-apps-put.out -w "%{http_code}" \
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-apps-put.out" -w "%{http_code}" \
   -X PUT "${API_URL}/v1/apps/__smoke_missing_app__" \
   -H 'Content-Type: application/json' -d '{}' || echo 000)
-body=$(cat /tmp/schema-apps-put.out 2>/dev/null || true)
+body=$(cat "$SMOKE_RUN_DIR/schema-apps-put.out" 2>/dev/null || true)
 case "$code" in
   400|401|404)
     if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
@@ -197,6 +202,131 @@ if [ -n "$FN" ] && [ "$FN" != "None" ]; then
     fail=1
   fi
 fi
+
+# =====================================================
+# v2 release registry routes — smoke /v2/apps and /v2/releases/*
+# =====================================================
+
+# Anonymous GET /v2/apps (list all apps). Lambda returns [] or a JSON array.
+# APIGW `{"message":"Not Found"}` means the route was never mounted.
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-apps-list.out" -w "%{http_code}" \
+  "${API_URL}/v2/apps" || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-apps-list.out" 2>/dev/null || true)
+case "$code" in
+  200)
+    if echo "$body" | grep -q '\['; then
+      echo "OK   /v2/apps HTTP 200 (route mounted, array returned)"
+    else
+      echo "FAIL /v2/apps: HTTP 200 but body is not a JSON array: $(echo "$body" | cut -c1-120)"
+      fail=1
+    fi
+    ;;
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL /v2/apps HTTP 404 APIGW missing-route (mount GET on /v2/apps)"
+    else
+      echo "FAIL /v2/apps HTTP 404 body=$(echo "$body" | cut -c1-120)"
+    fi
+    fail=1
+    ;;
+  *) echo "FAIL /v2/apps HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# GET /v2/apps/{app_id} must reach Lambda (404 or 200), never APIGW 404.
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-app-get.out" -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__" || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-app-get.out" 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id} HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id} HTTP $code (mounted; Lambda 404 or app found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/apps/{app_id} HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/apps/{app_id}/releases must reach Lambda (200 or 404), never APIGW 404.
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-app-releases.out" -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__/releases" || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-app-releases.out" 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id}/releases HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id}/releases HTTP $code (mounted; Lambda 404 or releases found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/apps/{app_id}/releases HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/releases/{release_id} must reach Lambda (404 or 200), never APIGW 404.
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-release-get.out" -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__" || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-release-get.out" 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id} HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id} HTTP $code (mounted; Lambda 404 or release found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/releases/{release_id} HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# GET /v2/releases/{release_id}/compat must reach Lambda (200 or 404), never APIGW 404.
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-release-compat-get.out" -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__/compat" || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-release-compat-get.out" 2>/dev/null || true)
+case "$code" in
+  200|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route (mount GET)"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda 404 or compat rows found)"
+    fi
+    ;;
+  *)
+    echo "FAIL GET /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
+
+# POST /v2/releases/{release_id}/compat must reach Lambda (unsigned → 401/400/404, never APIGW 404).
+code=$(curl -sS -m 20 -o "$SMOKE_RUN_DIR/schema-v2-release-compat-post.out" -w "%{http_code}" \
+  -X POST "${API_URL}/v2/releases/__smoke_test_release__/compat" \
+  -H 'Content-Type: application/json' -d '{}' || echo 000)
+body=$(cat "$SMOKE_RUN_DIR/schema-v2-release-compat-post.out" 2>/dev/null || true)
+case "$code" in
+  400|401|404)
+    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route (mount POST)"
+      fail=1
+    else
+      echo "OK   POST /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda auth/validation rejection)"
+    fi
+    ;;
+  *)
+    echo "FAIL POST /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"
+    fail=1
+    ;;
+esac
 
 if [ "$fail" -ne 0 ]; then
   echo "schema smoke-$ENVIRONMENT FAILED"
