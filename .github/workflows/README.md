@@ -9,7 +9,8 @@ GitHub is the gate of record for this repo since 2026-09-30.
   `decision-2026-09-30-prod-deploy-automation-github-oidc`, prod canary
   `decision-2026-10-01-prod-canary-5pct-24h-soak`). Dev deploys automatically
   after `ci-required` succeeds on a push to main. Prod runs after that dev
-  job when dev deploy and dev smoke pass. The prod alias is pinned at 5%
+  job when dev deploy and dev smoke pass and `canonical-vocabulary/phase` is `prod`.
+  The initial `dev` phase keeps PROD on its current binary. A reviewed source change opens PROD after real DEV operations. The prod alias is pinned at 5%
   on the new version. A manual `workflow_dispatch` (target=prod,
   confirm_prod=deploy-prod) runs the same pair. Do not add an `environment:`
   key: it changes the OIDC `sub` claim and the IAM trust rejects it. Roles:

@@ -1,4 +1,5 @@
 github
 # Gate of record for EdgeVector/schema-infra: GitHub (moved from LastGit 2026-09-30).
 # PRs: gh. CI: .github/workflows/ci-required.yml (job ci-required).
-# Deploy automation is OFF; see .github/workflows/README.md.
+# Main changes deploy through DEV and the reviewed canonical-vocabulary phase.
+# See .github/workflows/README.md.
