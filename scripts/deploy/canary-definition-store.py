@@ -39,6 +39,10 @@ def main():
         print("REFUSED: definition stores differ (" + ", ".join(changed) +
               "). Candidate stays unrouted; a separate definition cutover is required.", file=sys.stderr)
         return 1
+    if not new["namespace"]:
+        # Equal legacy environment settings do not prove storage-format
+        # compatibility when a code-only release changes the registry writer.
+        raise ValueError("a versioned definition generation is required")
     print("Definition store identity matches for the numbered versions.")
     return 0
 
