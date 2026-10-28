@@ -700,14 +700,23 @@ exports.handler = async (event) => {
     // on cold start to populate the in-memory cache.
     embeddingsTable.grantReadWriteData(schemaServiceFn);
     const canonicalEmbeddingsTable = new dynamodb.Table(this, "CanonicalVocabularyEmbeddingsTable", {
+      tableName: `schema-embeddings-${envName}-canonical-v1`,
+      partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    // Keep the old table and role grant while retained Lambda versions use v1.
+    canonicalEmbeddingsTable.grantReadWriteData(schemaServiceFn);
+    const atomicEmbeddingsTable = new dynamodb.Table(this, "AtomicVocabularyEmbeddingsTable", {
       tableName: `schema-embeddings-${envName}-${definitionNamespace}`,
       partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
-    canonicalEmbeddingsTable.grantReadWriteData(schemaServiceFn);
-    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", canonicalEmbeddingsTable.tableName);
+    atomicEmbeddingsTable.grantReadWriteData(schemaServiceFn);
+    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", atomicEmbeddingsTable.tableName);
 
     // =====================================================
     // Schema mutation gate quota state.
