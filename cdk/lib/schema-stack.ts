@@ -291,6 +291,7 @@ exports.handler = async (event) => {
     // to the path referenced below.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
+      architecture: lambda.Architecture.X86_64,
       handler: "bootstrap",
       code: lambda.Code.fromAsset(
         "../fold/target/lambda/server_lambda-extracted",
@@ -326,6 +327,9 @@ exports.handler = async (event) => {
         // S3BlobPersistence. No filesystem required, no VPC, no EFS.
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
+        // Definitions are isolated. App identities keep the existing store.
+        SCHEMA_DEFINITION_NAMESPACE: "canonical-v1",
+        CANONICAL_FIELD_PUBLISHER_PUBKEY: "IpPPrWkqkZFTkTaDlCyxIffm7arUrrZeGYhOmi6Hbnw=",
         SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
         ...(schemaStoreR2Config
           ? {
@@ -569,6 +573,11 @@ exports.handler = async (event) => {
         integrationId: "FieldDeclareIntegrationV1",
       },
       {
+        path: "/v1/fields/vocabulary",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "CanonicalVocabularyIntegrationV1",
+      },
+      {
         path: "/v1/fields/{declaration_id}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "FieldGetIntegrationV1",
@@ -626,10 +635,15 @@ exports.handler = async (event) => {
     // PutItem on every `add_schema` / `add_canonical_field`, Query
     // on cold start to populate the in-memory cache.
     embeddingsTable.grantReadWriteData(schemaServiceFn);
-    schemaServiceFn.addEnvironment(
-      "SCHEMA_EMBEDDINGS_TABLE",
-      embeddingsTable.tableName,
-    );
+    const canonicalEmbeddingsTable = new dynamodb.Table(this, "CanonicalVocabularyEmbeddingsTable", {
+      tableName: `schema-embeddings-${envName}-canonical-v1`,
+      partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    canonicalEmbeddingsTable.grantReadWriteData(schemaServiceFn);
+    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", canonicalEmbeddingsTable.tableName);
 
     // =====================================================
     // Schema mutation gate quota state.

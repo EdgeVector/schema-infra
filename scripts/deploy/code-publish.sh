@@ -30,6 +30,8 @@ cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/scripts/deploy/telemetry.sh"
 # shellcheck source=scripts/deploy/canary-lib.sh
 source "$SCRIPT_DIR/scripts/deploy/canary-lib.sh"
+source "$SCRIPT_DIR/scripts/deploy/canonical-vocabulary-phase.sh"
+canonical_vocabulary_require_environment "$ENV_NAME"
 
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 

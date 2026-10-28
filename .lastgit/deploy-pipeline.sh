@@ -44,6 +44,12 @@ if [ "${DEPLOY_FREEZE:-}" = "true" ]; then
   exit 0
 fi
 
+source "$(pwd)/scripts/deploy/canonical-vocabulary-phase.sh"
+CANONICAL_ROLLOUT_PHASE="$(canonical_vocabulary_phase)"
+if [ "$CANONICAL_ROLLOUT_PHASE" = dev ] && [ -e "${STATE_DIR}/prod-eligible" ]; then
+  rm -- "${STATE_DIR}/prod-eligible"
+fi
+
 command -v aws >/dev/null || { echo "FAIL: aws missing" >&2; exit 1; }
 command -v curl >/dev/null || { echo "FAIL: curl missing" >&2; exit 1; }
 aws sts get-caller-identity --query Account --output text >/dev/null
@@ -146,6 +152,11 @@ if [ "$KIND" = "code-only" ]; then
     schema_telemetry_stage_end dev_smoke "$stage_started"
   fi
 
+  if [ "$CANONICAL_ROLLOUT_PHASE" = dev ]; then
+    echo "Canonical vocabulary DEV phase selected; PROD remains unchanged."
+    exit 0
+  fi
+
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then
     # last-deployed-oid already written after dev deploy, before smoke.
     printf '%s\n' "$OID" > "${STATE_DIR}/prod-eligible"
@@ -208,6 +219,11 @@ else
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
     bash ./scripts/deploy/smoke-dev.sh
     schema_telemetry_stage_end dev_smoke "$stage_started"
+  fi
+
+  if [ "$CANONICAL_ROLLOUT_PHASE" = dev ]; then
+    echo "Canonical vocabulary DEV phase selected; PROD remains unchanged."
+    exit 0
   fi
 
   if [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "1" ] || [ "${LASTGIT_DEPLOY_SKIP_PROD:-}" = "true" ]; then

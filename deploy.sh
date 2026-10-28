@@ -6,6 +6,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=scripts/deploy/telemetry.sh
 source "$SCRIPT_DIR/scripts/deploy/telemetry.sh"
 ENVIRONMENT="${1:-dev}"
+source "$SCRIPT_DIR/scripts/deploy/canonical-vocabulary-phase.sh"
+canonical_vocabulary_require_environment "$ENVIRONMENT"
 
 # Parse flags (after the first positional arg)
 SKIP_INFRA=false
