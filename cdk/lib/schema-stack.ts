@@ -411,6 +411,7 @@ exports.handler = async (event) => {
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
+          apigwv2.CorsHttpMethod.PUT,
           apigwv2.CorsHttpMethod.OPTIONS
         ],
         allowHeaders: ["Content-Type", "Authorization"],
@@ -585,6 +586,69 @@ exports.handler = async (event) => {
     ];
 
     for (const route of v1Routes) {
+      httpApi.addRoutes({
+        path: route.path,
+        methods: route.methods,
+        integration: lambdaIntegration(route.integrationId),
+      });
+    }
+
+    // =====================================================
+    // Route definitions — /v2 release registry.
+    //
+    // The Lambda implements v2 release-registry routes (apps/releases/
+    // channels/revocations). Without these gateway mounts, clients see
+    // APIGW `{"message":"Not Found"}` even though the Lambda handler
+    // exists.
+    //
+    // The /v2 handlers only exist in fold pins >= 288a960b (LastDB #465).
+    // The current pin (5a7efbdd, fold #608) includes them. DEV can now
+    // accept the newer fold (canonical-v1 namespace, PR #477) without
+    // rejecting the legacy schemas.json that blocked PR #475.
+    // =====================================================
+    const v2Routes: Array<{
+      path: string;
+      methods: apigwv2.HttpMethod[];
+      integrationId: string;
+    }> = [
+      {
+        path: "/v2/apps",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppListCreateIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "AppGetIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/releases",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "AppReleasesIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/channels/{channel}",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+        integrationId: "ChannelIntegrationV2",
+      },
+      {
+        path: "/v2/apps/{app_id}/revocations",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "RevocationIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ReleaseGetIntegrationV2",
+      },
+      {
+        path: "/v2/releases/{release_id}/compat",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        integrationId: "ReleaseCompatIntegrationV2",
+      },
+    ];
+
+    for (const route of v2Routes) {
       httpApi.addRoutes({
         path: route.path,
         methods: route.methods,
