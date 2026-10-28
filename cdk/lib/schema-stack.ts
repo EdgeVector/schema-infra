@@ -771,6 +771,16 @@ exports.handler = async (event) => {
     // Enforced in every environment since 2026-08-18 (Tom-approved prod
     // cutover, decision-2026-08-18-schema-pow-prod-cutover-execute).
     schemaServiceFn.addEnvironment("SCHEMA_MUTATION_GATE_ENFORCE", "true");
+    // DEV has no hourly/daily schema count caps; proof of work stays enforced.
+    if (environment.isDev) {
+      for (const identity of ["NODE", "DEV"]) {
+        for (const window of ["HOUR", "DAY"]) {
+          schemaServiceFn.addEnvironment(
+            `SCHEMA_MUTATION_GATE_${identity}_NOVEL_${window}_QUOTA`, "0",
+          );
+        }
+      }
+    }
 
     // =====================================================
     // Cross-stack auth wire — `GET /v1/snapshot` validates
