@@ -3,7 +3,9 @@
 The schema service enforces precise field definitions through one code policy for every caller.
 New concepts enter through normal schema publication and field declaration.
 There is no special vocabulary signing key or vocabulary write endpoint.
-App identity, permission, mutation, and quota checks remain active.
+App identity, permission, proof-of-work, and burst-rate checks remain active.
+DEV has no hourly or daily new-schema count caps.
+Production retains its existing count caps.
 
 ## Common field policy
 
@@ -28,7 +30,7 @@ Both release paths stop after the normal DEV checks.
 The direct production deploy commands also refuse this phase.
 No environment override opens production.
 
-The `canonical-v1/` definition generation does not fall back to legacy definitions.
+The `canonical-v2/` atomic definition generation does not fall back to legacy definitions.
 The service starts with 113 seed concepts.
 The four source app manifests contain 183 unique concepts, with one seed overlap.
 The common policy determines admission and concept reuse during app declarations.
