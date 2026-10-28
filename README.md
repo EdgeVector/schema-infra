@@ -15,7 +15,7 @@ only. See [`.github/workflows/README.md`](.github/workflows/README.md).
 This project contains everything needed to deploy the global schema registry for FoldDB:
 
 - **Lambda Function**: Rust-based schema service with fastembed semantic search
-- **S3 Bucket**: Schema blob persistence (one JSON object per schema)
+- **S3 Bucket**: One conditional definition image for schemas and canonical fields
 - **API Gateway**: HTTP API with CORS and custom domain support
 - **Frontend**: Web UI for browsing schemas
 
@@ -56,7 +56,7 @@ build no longer uses the gaming PC (`SCHEMA_BUILD_REMOTE_HOST=pc` is retired).
 
 The schema service runs as a single Lambda function with two storage layers:
 
-1. **S3 blob persistence** — each schema stored as `schemas/<name>.json` in an S3 bucket. Replaced the earlier Sled-on-/tmp approach, which was unreliable across cold starts. S3 gives durable, consistent storage with no /tmp size limits.
+1. **S3 persistence** — `canonical-v2/definitions.json` stores schemas and canonical fields together. One conditional write commits a schema and its new field definitions. The process exposes the vocabulary after that write succeeds. The service refuses an implicit conversion of a nonempty legacy store. The `canonical-v1/` generation and its embedding store remain available for recovery. App identities and quotas keep their existing stores.
 2. **fastembed Lambda Layer** — a pre-built layer bundles the fastembed model binary so the Lambda doesn't download it on every cold start. Cold start stays under 2s even with the embedding model loaded.
 
 Lambda configuration:

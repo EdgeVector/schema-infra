@@ -96,6 +96,7 @@ export class SchemaServiceStack extends Stack {
       Stack.of(this).account,
     );
     const envName = environment.name;
+    const definitionNamespace = "canonical-v2";
 
     // Backend Sentry config, added to the request-path Lambda. Prod deploy.sh
     // loads OBS_SENTRY_DSN with `gh variable get` (echo off) and exports it
@@ -328,7 +329,7 @@ exports.handler = async (event) => {
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
         // Definitions are isolated. App identities keep the existing store.
-        SCHEMA_DEFINITION_NAMESPACE: "canonical-v1",
+        SCHEMA_DEFINITION_NAMESPACE: definitionNamespace,
         SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
         ...(schemaStoreR2Config
           ? {
@@ -699,7 +700,7 @@ exports.handler = async (event) => {
     // on cold start to populate the in-memory cache.
     embeddingsTable.grantReadWriteData(schemaServiceFn);
     const canonicalEmbeddingsTable = new dynamodb.Table(this, "CanonicalVocabularyEmbeddingsTable", {
-      tableName: `schema-embeddings-${envName}-canonical-v1`,
+      tableName: `schema-embeddings-${envName}-${definitionNamespace}`,
       partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
