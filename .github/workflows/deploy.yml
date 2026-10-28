@@ -148,6 +148,9 @@ jobs:
 
   deploy-prod:
     name: deploy-prod
+    concurrency:
+      group: schema-infra-prod-traffic
+      cancel-in-progress: false
     needs: deploy-dev
     if: >-
       needs.deploy-dev.outputs.prod_eligible == 'true'

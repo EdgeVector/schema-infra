@@ -115,6 +115,7 @@ export class SchemaInfraOidcStack extends Stack {
             "lambda:GetAlias",
             "lambda:GetFunction",
             "lambda:GetFunctionConfiguration",
+            "lambda:InvokeFunction",
             "lambda:GetProvisionedConcurrencyConfig",
             "lambda:PutProvisionedConcurrencyConfig",
             "lambda:DeleteProvisionedConcurrencyConfig",

@@ -1,31 +1,31 @@
 {
   "policy_version": 1,
-  "namespace": "canonical-v1",
+  "namespace": "canonical-v2",
   "sources": [
     {
       "repository": "EdgeVector/brain",
-      "revision": "993956b81674ed55032579cec7448da26f599547",
+      "revision": "8b3870253bb350d2dc41cee6b30438a9dc4e1a1b",
       "path": "src/canonical-fields.json",
       "sha256": "0c2b16fdfd2c84a869d723d131507f99a72cc0f25cfa50c8828d734ea96b9448",
       "concepts": 64
     },
     {
       "repository": "EdgeVector/fkanban",
-      "revision": "8d41ca1652fba175b9632f23f10fa28684841af9",
+      "revision": "a2ba941e2deff18920e1f3293b273ce95a8d4d15",
       "path": "src/canonical-fields.json",
-      "sha256": "9d2e68817fbee54768bcb83281183d126e9f82d521a646c68bddcb3bb0f7a078",
+      "sha256": "1c4d379f9068cfe8e26b12a9945d34ceaa7cee7aa15ea42b4e753046414d0b39",
       "concepts": 64
     },
     {
       "repository": "EdgeVector/situations",
-      "revision": "49d00a4e8a7070392439293b05b051e660874970",
+      "revision": "1dbdd777946922516fd1a40fc508ce207b9f3bba",
       "path": "src/canonical-fields.json",
       "sha256": "a1723f86d0837ac18cff0b0f8faaf3fa2fb578ea73c40990e9e83b20310b8118",
       "concepts": 53
     },
     {
       "repository": "EdgeVector/lastsecrets",
-      "revision": "21a18fdd8cf9e3bbd4d64af562d99a1214ebb69f",
+      "revision": "9590819f04f4e6018de594789abf3ebeef93f787",
       "path": "src/canonical-fields.json",
       "sha256": "5f2afdfa57a1e44704f1f00ef9fbbc50cdca8e518afc851f5daea8842c4b8a8f",
       "concepts": 11

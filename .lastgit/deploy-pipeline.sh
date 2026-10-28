@@ -128,7 +128,6 @@ PROD_NEW_VER=""
 PROD_CODE_SHA=""
 OLD_VER=""
 PIN_RC=1          # 0 = weighted canary pin in place (soak state is written)
-CANARY_REFUSED=0
 
 if [ "$KIND" = "code-only" ]; then
   # ---------- CODE-ONLY: publish, never CDK ----------
@@ -256,21 +255,19 @@ else
   CDK_INVOKED=true
 fi
 
-  # Record the deployed oid after prod CDK and before smoke, since the Lambda
-  # is already live. If smoke fails, the next run must compare against what
-  # is actually deployed, not the last successful deploy.
+  # Record the infrastructure revision; the public alias still serves OLD.
   printf '%s\n' "$OID" > "$LAST_OID_FILE"
-
-  echo "== STAGE 4: smoke PROD =="
-stage_started="$(schema_telemetry_stage_start prod_smoke)"
-bash ./scripts/deploy/smoke-dev.sh prod
-schema_telemetry_stage_end prod_smoke "$stage_started"
 
 FN=$(schema_fn_name prod us-east-1)
 if [ "$KIND" = "code-only" ]; then
   NEW_VER="$PROD_NEW_VER"
 else
-  NEW_VER=$(alias_version "$FN" us-east-1)
+  [ "$(alias_version "$FN" us-east-1)" = "$OLD_VER" ] || {
+    echo "FAIL: production live version changed during CDK deployment" >&2; exit 1;
+  }
+  NEW_VER=$(aws cloudformation describe-stacks --stack-name SchemaServiceStack-prod --region us-east-1 \
+    --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceCandidateVersion`].OutputValue' --output text)
+  [[ "$NEW_VER" =~ ^[1-9][0-9]*$ ]] || { echo "FAIL: numbered candidate output missing" >&2; exit 1; }
   PROD_CODE_SHA="$(aws lambda get-function-configuration --function-name "$FN" \
     --qualifier "$NEW_VER" --region us-east-1 --query 'CodeSha256' --output text 2>/dev/null || true)"
   # CDK path: canary pin happens here (code-only pinned inside code-publish).
@@ -280,27 +277,18 @@ else
   set_canary_weights "$FN" us-east-1 "${OLD_VER:-}" "$NEW_VER" || PIN_RC=$?
   schema_telemetry_stage_end canary_pin "$stage_started"
   if [ "$PIN_RC" -eq 2 ]; then
-    # Fail closed: the pre-deploy live version is gone, so there is no safe
-    # primary and no rollback target. Live stays 100% on NEW (CDK already
-    # put it there). Never pin an older version instead.
-    if [ -n "${OLD_CODE_SHA:-}" ] && [ "$OLD_CODE_SHA" = "${PROD_CODE_SHA:-}" ]; then
-      # Byte-identical code (e.g. the first deploy after the RETAIN change,
-      # when CloudFormation still deletes the version the old template
-      # owned): nothing new to soak, nothing lost.
-      canary_log "canary: old=$OLD_VER gone but new=$NEW_VER has the same CodeSha256 — no canary needed"
-      PIN_RC=1
-    else
-      CANARY_REFUSED=1
-      schema_telemetry_emit canary_refused "oid=$OID" "old_version=$OLD_VER" \
-        "new_version=$NEW_VER" "old_code_sha256=${OLD_CODE_SHA:-}" \
-        "new_code_sha256=${PROD_CODE_SHA:-}"
-      canary_alert "prod canary REFUSED oid=$OID: pre-deploy live version $OLD_VER was deleted by the deploy; live is 100% on $NEW_VER with no soak and no rollback version. Check the CDK version RemovalPolicy."
-    fi
+    canary_alert "prod canary REFUSED oid=$OID: previous version $OLD_VER is unavailable; candidate $NEW_VER stays unrouted"
+    exit 1
   elif [ "$PIN_RC" -ne 0 ] && [ "$PIN_RC" -ne 1 ]; then
-    canary_alert "prod canary clock or revision check failed oid=$OID; no weighted pin proof"
+    canary_alert "prod candidate, store, clock or revision check refused oid=$OID; no alias move"
     exit 1
   fi
 fi
+
+echo "== STAGE 4: smoke PROD after the checked canary pin =="
+stage_started="$(schema_telemetry_stage_start prod_smoke)"
+bash ./scripts/deploy/smoke-dev.sh prod
+schema_telemetry_stage_end prod_smoke "$stage_started"
 
 # ---------- 5. Soak state + release evidence ----------
 STARTED=$(canary_ts)
@@ -319,7 +307,7 @@ if [ "${PIN_RC:-1}" -eq 0 ] && [ -n "${OLD_VER:-}" ] && [ "$OLD_VER" != "$NEW_VE
   canary_log "canary soak until $PROMOTE_AFTER (CANARY_SOAK_HOURS=${CANARY_SOAK_HOURS})"
   SOAK_MSG="prod canary soaking until $PROMOTE_AFTER"
 else
-  clear_canary_state 2>/dev/null || rm -f "${STATE_FILE:-}"
+  clear_canary_state
   canary_log "canary: no weighted pin (old==new or missing) — no soak state"
   SOAK_MSG="prod deploy; no canary pin needed"
 fi
@@ -342,12 +330,6 @@ schema_telemetry_emit release_row \
 
 # last-deployed-oid was already written after CDK deploy (before smoke), so
 # we don't need to write it again here on success.
-if [ "${CANARY_REFUSED:-0}" = "1" ]; then
-  # The release is live (100% on NEW) but unguarded. Fail the pipeline so the
-  # deploy-pipeline status on the commit is red and a human looks.
-  echo "FAIL: lastgit schema deploy-pipeline — prod canary refused (pre-deploy version $OLD_VER missing); live=100% $NEW_VER" >&2
-  exit 1
-fi
 echo "lastgit schema deploy-pipeline PASSED ($SOAK_MSG)"
 if [ "$KIND" != "code-only" ]; then
   echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"

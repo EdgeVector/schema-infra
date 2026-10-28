@@ -104,8 +104,14 @@ if [ "$SKIP_INFRA" = false ]; then
 
     npm run build
 
+    cdk_context=(--context environment="$ENVIRONMENT")
+    if [ "$ENVIRONMENT" = prod ]; then
+        source "$SCRIPT_DIR/scripts/deploy/preserve-prod-live.sh"
+        preserved_prod_version="$(schema_prod_live_version)" || exit 1
+        cdk_context+=(--context "schemaProdLiveVersion=$preserved_prod_version")
+    fi
     npx cdk deploy "SchemaServiceStack-$ENVIRONMENT" \
-        --context environment="$ENVIRONMENT" \
+        "${cdk_context[@]}" \
         --require-approval never \
         --outputs-file outputs.json
     schema_telemetry_stage_end "cdk_deploy_$ENVIRONMENT" "$stage_started"

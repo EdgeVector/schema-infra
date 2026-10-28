@@ -7,7 +7,10 @@
    - Deploy **dev** (`us-west-2`)
    - **Smoke** (`scripts/deploy/smoke-dev.sh`)
    - Deploy **prod** (`us-east-1`)
-   - Pin **5%** of prod `live` alias traffic on the new version (canary)
+   - Keep the previous PROD `live` version throughout CDK deployment.
+   - Read the numbered candidate's health and vocabulary directly.
+   - Verify both versions use the same durable definition store.
+   - Pin **5%** of prod `live` alias traffic on the candidate only after those checks.
 3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
    - If alarms ALARM anytime → **rollback** to previous version, then open one GitHub issue labeled `schema-canary-rollback`
@@ -22,15 +25,27 @@
   RETAIN` on the function). Before 2026-09-23 CloudFormation deleted the
   version the old template owned at the end of each deploy, which removed the
   pre-deploy live version.
-- The canary primary is always the version that `live` served before the
-  deploy. If that version is gone, `set_canary_weights` returns 2 and does
-  not touch the alias (fail closed): live stays 100% on the new version, no
-  soak state is written, a `canary_refused` telemetry row and a Situations
-  notice are emitted, and the pipeline exits non-zero. It never picks another
-  (older) version. Exception: when the new version has the same CodeSha256 as
-  the deleted one, nothing changed, so the pipeline logs it and passes.
-- The first deploy after the RETAIN change still deletes the version that the
-  previous template owned (CloudFormation applies the old DeletionPolicy).
+- The canary always retains the version that `live` served before the deploy.
+  CDK receives that observed version through `schemaProdLiveVersion` and keeps the alias there.
+  `SchemaServiceCandidateVersion` identifies the separately published candidate.
+- A missing previous version, failed candidate read, or different definition store refuses the canary.
+  No fallback moves all traffic to the candidate, even when its code checksum matches.
+- The production deploy job and ticker serialize public alias changes.
+  Promotion repeats the definition-store check and uses the observed alias revision.
+- The canonical vocabulary DEV phase refuses a new PROD canary or promotion.
+  An alarm rollback remains available.
+
+## Definition-generation cutover
+
+A weighted alias chooses a version for each request. It gives no client affinity.
+Do not use it across the legacy and canonical definition generations.
+The compatibility guard compares bucket, endpoint, region, namespace and embedding store.
+The qualified candidate check uses AWS IAM and creates no public endpoint or alias.
+The candidate read requires the deploy role's reviewed `lambda:InvokeFunction` permission.
+
+Keep the production phase held until a separately reviewed cutover preserves each client's definition generation.
+The normal canary applies after both versions use the same store.
+The readiness PR does not move PROD traffic or convert an existing home.
 
 ## “One box”
 

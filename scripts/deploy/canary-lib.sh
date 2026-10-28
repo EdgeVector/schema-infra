@@ -8,6 +8,8 @@ CANARY_WEIGHT="${CANARY_WEIGHT:-0.05}"  # 5% of live prod traffic on the new ver
 STATE_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-schema-infra}"
 STATE_FILE="${STATE_DIR}/canary-state.json"
 CANARY_ALIAS_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-alias-state.py"
+CANARY_STORE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-definition-store.py"
+source "$(dirname "${BASH_SOURCE[0]}")/canonical-vocabulary-phase.sh"
 mkdir -p "$STATE_DIR"
 
 canary_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -62,31 +64,36 @@ version_exists() {
   aws lambda get-function --function-name "$fn:$ver" --region "$region" >/dev/null 2>&1
 }
 
-# After CDK points live → NEW 100%, re-pin: primary=OLD, CANARY_WEIGHT → NEW.
+# Keep live on OLD and route only the checked canary fraction to NEW.
 # OLD must be the version the live alias served BEFORE this deploy. It is the
 # only safe primary: any other version is code nobody chose to serve now.
 # Return codes:
 #   0  weighted pin applied (primary=OLD, CANARY_WEIGHT → NEW)
-#   1  no pin needed (no distinct prior version) — live stays where it is
-#   2  REFUSED, fail closed: OLD no longer exists. The alias is NOT touched,
-#      so live stays on whatever it serves now (100% NEW after a CDK deploy).
+#   1  old and new are the same numbered version; alias stays unchanged
+#   2  REFUSED: OLD no longer exists. The alias is NOT touched.
 #      The caller must alert. Never substitute an older version: on
 #      2026-09-23 that put 90% of prod on 2026-09-01 code.
 #   3  REFUSED: alias read, clock proof, or revision-checked update failed.
+#   4  REFUSED: definition stores differ or cannot be verified.
 set_canary_weights() {
   local fn="$1" region="$2" old_ver="$3" new_ver="$4" alias_file request_file
+  canonical_vocabulary_require_environment prod || return 3
   if [ -z "${new_ver:-}" ] || [ "$new_ver" = "None" ]; then
-    canary_log "canary: no new version — skip pin"
+    canary_log "canary: REFUSED — no numbered candidate version"
+    return 3
+  fi
+  if [ "$old_ver" = "$new_ver" ]; then
+    canary_log "canary: old and new are identical — alias unchanged"
     return 1
   fi
-  if [ -z "$old_ver" ] || [ "$old_ver" = "$new_ver" ] || [ "$old_ver" = "\$LATEST" ] || [ "$old_ver" = "None" ]; then
-    canary_log "canary: no prior version to weight (old=${old_ver:-none} new=$new_ver) — leaving 100% on new"
-    return 1
-  fi
-  if ! version_exists "$fn" "$region" "$old_ver"; then
+  if [ -z "$old_ver" ] || [ "$old_ver" = '$LATEST' ] || [ "$old_ver" = None ] || ! version_exists "$fn" "$region" "$old_ver"; then
     canary_log "canary: REFUSED — pre-deploy live version old=$old_ver no longer exists; not pinning any other version; live alias left as is (new=$new_ver)"
     return 2
   fi
+  python3 "$CANARY_STORE_HELPER" --function-name "$fn" --region "$region" \
+    --old "$old_ver" --new "$new_ver" || return 4
+  python3 "$(dirname "$CANARY_STORE_HELPER")/check-schema-candidate.py" \
+    --function-name "$fn" --region "$region" --version "$new_ver" || return 3
   alias_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-alias.XXXXXX")"
   request_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-pin.XXXXXX")"
   if ! aws lambda get-alias --function-name "$fn" --name live --region "$region" \
@@ -131,17 +138,25 @@ canary_alert() {
 
 # Promote canary version to 100% (must clear routing weights).
 promote_canary_full() {
-  local fn="$1" region="$2" new_ver="$3" revision="${4:-}"
-  local revision_args=()
+  local fn="$1" region="$2" new_ver="$3" revision="${4:-}" alias old_ver observed_revision
+  canonical_vocabulary_require_environment prod || return 1
   [ -n "${new_ver:-}" ] || return 1
-  [ -z "$revision" ] || revision_args=(--revision-id "$revision")
+  alias="$(aws lambda get-alias --function-name "$fn" --name live --region "$region" \
+    --query '{version:FunctionVersion,revision:RevisionId,weights:RoutingConfig.AdditionalVersionWeights}' --output json)" || return 1
+  printf '%s' "$alias" | jq -e --arg new "$new_ver" --argjson weight "$CANARY_WEIGHT" \
+    '.weights == {($new): $weight}' >/dev/null || return 1
+  old_ver="$(printf '%s' "$alias" | jq -er '.version')" || return 1
+  observed_revision="$(printf '%s' "$alias" | jq -er '.revision')" || return 1
+  [ -z "$revision" ] || [ "$revision" = "$observed_revision" ] || return 1
+  python3 "$CANARY_STORE_HELPER" --function-name "$fn" --region "$region" \
+    --old "$old_ver" --new "$new_ver" || return 1
   canary_log "canary: promote 100% → version $new_ver (clear routing weights)"
   aws lambda update-alias \
     --function-name "$fn" \
     --name live \
     --function-version "$new_ver" \
     --routing-config "AdditionalVersionWeights={}" \
-    "${revision_args[@]}" --region "$region" >/dev/null
+    --revision-id "$observed_revision" --region "$region" >/dev/null
 }
 
 # Rollback: FunctionVersion stays the old version. Clear AdditionalVersionWeights.
