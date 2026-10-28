@@ -184,6 +184,120 @@ case "$code" in
     ;;
 esac
 
+# /v2 registry routes must reach Lambda, not APIGW 404. Empty canonical-v1 returns [],
+# not gateway {"message":"Not Found"}. Any Lambda 4xx/2xx proves the route is mounted.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-apps-list.out -w "%{http_code}" \
+  "${API_URL}/v2/apps" || echo 000)
+body=$(cat /tmp/schema-v2-apps-list.out 2>/dev/null || true)
+case "$code" in
+  200)
+    if echo "$body" | grep -q '\['; then
+      echo "OK   /v2/apps HTTP 200 (v2 registry mounted)"
+    else
+      echo "FAIL /v2/apps: HTTP 200 but body is not a JSON array: $(echo "$body" | cut -c1-120)"
+      fail=1
+    fi
+    ;;
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL /v2/apps HTTP 404 APIGW missing-route (mount GET /v2/apps)"
+    else
+      echo "FAIL /v2/apps HTTP 404 body=$(echo "$body" | cut -c1-120)"
+    fi
+    fail=1
+    ;;
+  *) echo "FAIL /v2/apps HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# /v2/apps/{app_id} — unknown ID returns Lambda 404, not APIGW 404 missing-route
+code=$(curl -sS -m 20 -o /tmp/schema-v2-app-get.out -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__" || echo 000)
+body=$(cat /tmp/schema-v2-app-get.out 2>/dev/null || true)
+case "$code" in
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id} HTTP 404 APIGW missing-route"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id} HTTP 404 (mounted; Lambda not-found)"
+    fi
+    ;;
+  200|400|401) echo "OK   GET /v2/apps/{app_id} HTTP $code (mounted)"; ;;
+  *) echo "FAIL GET /v2/apps/{app_id} HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# /v2/apps/{app_id}/releases — unknown app returns Lambda 404, not APIGW 404
+code=$(curl -sS -m 20 -o /tmp/schema-v2-app-releases.out -w "%{http_code}" \
+  "${API_URL}/v2/apps/__smoke_missing_app__/releases" || echo 000)
+body=$(cat /tmp/schema-v2-app-releases.out 2>/dev/null || true)
+case "$code" in
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/apps/{app_id}/releases HTTP 404 APIGW missing-route"
+      fail=1
+    else
+      echo "OK   GET /v2/apps/{app_id}/releases HTTP 404 (mounted; Lambda not-found)"
+    fi
+    ;;
+  200|400|401) echo "OK   GET /v2/apps/{app_id}/releases HTTP $code (mounted)"; ;;
+  *) echo "FAIL GET /v2/apps/{app_id}/releases HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# /v2/releases/{release_id} — unknown release returns Lambda 404, not APIGW 404
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-get.out -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__" || echo 000)
+body=$(cat /tmp/schema-v2-release-get.out 2>/dev/null || true)
+case "$code" in
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id} HTTP 404 APIGW missing-route"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id} HTTP 404 (mounted; Lambda not-found)"
+    fi
+    ;;
+  200|400|401) echo "OK   GET /v2/releases/{release_id} HTTP $code (mounted)"; ;;
+  *) echo "FAIL GET /v2/releases/{release_id} HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# /v2/releases/{release_id}/compat GET — unknown release returns Lambda 404, not APIGW 404
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-compat-get.out -w "%{http_code}" \
+  "${API_URL}/v2/releases/__smoke_missing_release__/compat" || echo 000)
+body=$(cat /tmp/schema-v2-release-compat-get.out 2>/dev/null || true)
+case "$code" in
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL GET /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route"
+      fail=1
+    else
+      echo "OK   GET /v2/releases/{release_id}/compat HTTP 404 (mounted; Lambda not-found)"
+    fi
+    ;;
+  200|400|401) echo "OK   GET /v2/releases/{release_id}/compat HTTP $code (mounted)"; ;;
+  *) echo "FAIL GET /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
+# /v2/releases/{release_id}/compat POST — unsigned write must reach Lambda (401/400),
+# not APIGW 404. This proves APP_REGISTRY_VERIFIER_PUBKEY wiring is correct.
+code=$(curl -sS -m 20 -o /tmp/schema-v2-release-compat-post.out -w "%{http_code}" \
+  -X POST "${API_URL}/v2/releases/__smoke_missing_release__/compat" \
+  -H 'Content-Type: application/json' -d '{}' || echo 000)
+body=$(cat /tmp/schema-v2-release-compat-post.out 2>/dev/null || true)
+case "$code" in
+  400|401)
+    echo "OK   POST /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda auth/validation)"
+    ;;
+  404)
+    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
+      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route"
+    else
+      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 body=$(echo "$body" | cut -c1-120)"
+    fi
+    fail=1
+    ;;
+  *) echo "FAIL POST /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
+esac
+
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)
