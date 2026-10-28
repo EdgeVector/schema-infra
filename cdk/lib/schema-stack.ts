@@ -20,6 +20,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Environment } from "./environment";
+import { schemaLiveVersion } from "./schema-live-version";
 
 export interface SchemaServiceStackProps extends StackProps {
   environment?: string;
@@ -387,13 +388,15 @@ exports.handler = async (event) => {
     // Grant Lambda read/write on the schema bucket (domain blobs).
     schemaBucket.grantReadWrite(schemaServiceFn);
 
-    // `live` alias is the traffic seam for staged canary deploys:
-    // post-deploy scripts pin 10% of prod traffic on a new version for
-    // CANARY_SOAK_HOURS (default 24h), then promote to 100% if alarms stay
-    // green. See scripts/deploy/* and .lastgit/deploy-pipeline.sh.
+    // Production keeps its observed live version throughout CDK deployment.
+    // Only the checked canary path may route traffic to the published candidate.
     const schemaServiceLive = new lambda.Alias(this, "SchemaServiceLiveAlias", {
       aliasName: "live",
-      version: schemaServiceFn.currentVersion,
+      version: schemaLiveVersion(this, schemaServiceFn, environment.isDev),
+    });
+    new CfnOutput(this, "SchemaServiceCandidateVersion", {
+      value: schemaServiceFn.currentVersion.version,
+      description: "Published candidate; production traffic stays on the preserved live version",
     });
 
     // Every route points at the `live` alias (not $LATEST), so canary weights

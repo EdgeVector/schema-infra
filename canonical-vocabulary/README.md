@@ -4,6 +4,7 @@ The schema service enforces precise field definitions through one code policy fo
 New concepts enter through normal schema publication and field declaration.
 There is no special vocabulary signing key or vocabulary write endpoint.
 App identity, permission, proof-of-work, and burst-rate checks remain active.
+New schema and field registrations require an Exemem developer account and the registered app owner.
 DEV has no hourly or daily new-schema count caps.
 Production retains its existing count caps.
 
@@ -56,6 +57,38 @@ Open `prod` through a separate reviewed source change after real DEV app operati
 Keep the existing production checks, 5% canary, alarms, and 24-hour period.
 A rollback uses the retained previous version and its previous definition generation.
 Keep recovery data during the canary.
+
+### Readiness hold
+
+The readiness change keeps `phase=dev`. Its merge cannot start a PROD deployment.
+PROD currently uses the legacy definition generation; `canonical-v2/` is separate.
+A random traffic split across those generations can lose read-after-write visibility.
+The canary and promotion commands refuse different store identities or an incomplete identity check.
+They compare the bucket, endpoint, storage region, definition namespace, and embedding store.
+No environment flag skips this check.
+
+The PROD CDK path requires the observed numbered `live` version and keeps it in place.
+It publishes a candidate version as a separate stack output.
+It refuses a new deployment while a weighted canary remains active.
+The production deploy job and the canary ticker use one traffic-change concurrency group.
+The canary checks the numbered candidate directly before it changes the public alias.
+An absent previous version never causes an unguarded move to the candidate.
+
+Before the separately approved PROD phase:
+
+1. Refresh the recovery definitions and retain the previous Lambda version and embedding store.
+2. Review the exact app source references in `sources.json` and the matching core revision.
+3. Grant the reviewed deploy role permission for the qualified candidate reads through the IAM stack.
+   The normal deploy workflow does not deploy that IAM stack.
+4. Prepare the new generation through ordinary developer-account registration and common field validation.
+   Keep PROD count limits and proof of work. Schedule registrations within those limits.
+5. Review an explicit definition-generation cutover before public traffic can reach the new generation.
+   A separate candidate check does not authorize this cutover or a local data conversion.
+6. Complete isolated account, app, recovery, and qualified candidate checks.
+7. Open the production phase through its reviewed source change and required release approval.
+
+The ordinary 5% canary is permitted only when both numbered versions use the same definition store.
+The alarm and 24-hour gates still control full promotion.
 
 Existing app configs retain their data identities.
 A canonical name change does not move an existing record.

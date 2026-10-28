@@ -59,7 +59,12 @@ fi
 
 stage_started="$(schema_telemetry_stage_start "code_publish_${ENV_NAME}")"
 
-OLD_VER="$(alias_version "$FN" "$REGION" || true)"
+if [ "$ENV_NAME" = prod ]; then
+    source "$SCRIPT_DIR/scripts/deploy/preserve-prod-live.sh"
+    OLD_VER="$(schema_prod_live_version)" || exit 1
+else
+    OLD_VER="$(alias_version "$FN" "$REGION" || true)"
+fi
 canary_log "code-publish($ENV_NAME): fn=$FN pre-publish live=${OLD_VER:-none}"
 
 aws lambda update-function-code \
@@ -101,15 +106,11 @@ else
         echo "CANARY_PIN=$CANARY_PIN"
         exit 1
     elif [ "$PIN_RC" -ne 1 ]; then
-        canary_alert "code-publish(prod): canary clock or revision check failed; no fallback alias move"
+        canary_alert "code-publish(prod): candidate, store, clock or revision check refused; no alias move"
         exit 1
     else
-        # No prior version to weight — put live fully on the new version,
-        # same behavior as the CDK path's no-pin case.
-        aws lambda update-alias --function-name "$FN" --name live \
-            --function-version "$NEW_VER" \
-            --routing-config '{}' >/dev/null
-        canary_log "code-publish(prod): no weighted pin — live → $NEW_VER (100%)"
+        # Only an identical numbered version returns 1. No unguarded full move.
+        canary_log "code-publish(prod): identical version — alias unchanged"
         CANARY_PIN=none
     fi
 fi
