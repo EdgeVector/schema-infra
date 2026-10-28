@@ -96,6 +96,7 @@ export class SchemaServiceStack extends Stack {
       Stack.of(this).account,
     );
     const envName = environment.name;
+    const definitionNamespace = "canonical-v2";
 
     // Backend Sentry config, added to the request-path Lambda. Prod deploy.sh
     // loads OBS_SENTRY_DSN with `gh variable get` (echo off) and exports it
@@ -328,7 +329,7 @@ exports.handler = async (event) => {
         // User-submitted schemas and canonical fields persist across
         // cold starts because S3 is the source of truth.
         // Definitions are isolated. App identities keep the existing store.
-        SCHEMA_DEFINITION_NAMESPACE: "canonical-v1",
+        SCHEMA_DEFINITION_NAMESPACE: definitionNamespace,
         SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
         ...(schemaStoreR2Config
           ? {
@@ -705,8 +706,17 @@ exports.handler = async (event) => {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    // Keep the old table and role grant while retained Lambda versions use v1.
     canonicalEmbeddingsTable.grantReadWriteData(schemaServiceFn);
-    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", canonicalEmbeddingsTable.tableName);
+    const atomicEmbeddingsTable = new dynamodb.Table(this, "AtomicVocabularyEmbeddingsTable", {
+      tableName: `schema-embeddings-${envName}-${definitionNamespace}`,
+      partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    atomicEmbeddingsTable.grantReadWriteData(schemaServiceFn);
+    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", atomicEmbeddingsTable.tableName);
 
     // =====================================================
     // Schema mutation gate quota state.
