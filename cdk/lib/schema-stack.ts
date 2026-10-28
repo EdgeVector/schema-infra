@@ -329,7 +329,6 @@ exports.handler = async (event) => {
         // cold starts because S3 is the source of truth.
         // Definitions are isolated. App identities keep the existing store.
         SCHEMA_DEFINITION_NAMESPACE: "canonical-v1",
-        CANONICAL_FIELD_PUBLISHER_PUBKEY: "IpPPrWkqkZFTkTaDlCyxIffm7arUrrZeGYhOmi6Hbnw=",
         SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
         ...(schemaStoreR2Config
           ? {
@@ -575,7 +574,7 @@ exports.handler = async (event) => {
       },
       {
         path: "/v1/fields/vocabulary",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+        methods: [apigwv2.HttpMethod.GET],
         integrationId: "CanonicalVocabularyIntegrationV1",
       },
       {
