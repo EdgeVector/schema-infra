@@ -4,7 +4,7 @@
   "sources": [
     {
       "repository": "EdgeVector/brain",
-      "revision": "7793245eb07c979dde704162a456ce39192f586c",
+      "revision": "05860dc42ed58c655fc9220fcde0fbd0e40966d9",
       "path": "src/canonical-fields.json",
       "sha256": "0c2b16fdfd2c84a869d723d131507f99a72cc0f25cfa50c8828d734ea96b9448",
       "concepts": 64
