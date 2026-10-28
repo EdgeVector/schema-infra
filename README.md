@@ -124,10 +124,10 @@ scripts/deploy/prove-mutation-gate.sh
 
 The command defaults to dev, verifies enforcement, a transparent
 challenge/solve/registration, an idempotent repost, DynamoDB quota state, and
-CloudWatch rejection/acceptance signals. Add `--quota-probe` for the bounded
-dev-only run that stops on the first server-side quota rejection. Production
-requires both `--environment prod` and `--allow-prod`; the quota probe is
-refused in production. Output is a single secret-safe JSON report.
+CloudWatch rejection/acceptance signals. Current DEV disables hourly and daily
+schema-count caps, so the optional `--quota-probe` does not apply to this policy.
+Proof of work and burst-rate controls remain active. Production requires both
+`--environment prod` and `--allow-prod`. Output is a single secret-safe JSON report.
 
 ### Schema Lambda fast-deployment terminal proof
 
