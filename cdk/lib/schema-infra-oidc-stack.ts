@@ -172,6 +172,30 @@ export class SchemaInfraOidcStack extends Stack {
         }),
       );
 
+      if (envName === "prod") {
+        const bucket = `schema-service-prod-${account}`;
+        role.addToPolicy(new iam.PolicyStatement({
+          sid: "ReadReviewedDefinitionRetirement",
+          actions: ["s3:GetObject", "s3:GetObjectVersion"],
+          resources: ["schemas.json", "canonical_fields.json", "canonical-v2/definitions.json"]
+            .map((key) => `arn:aws:s3:::${bucket}/${key}`),
+        }));
+        // Exact known prefixes prove that the two unused legacy objects are
+        // absent. This is not unfiltered access to the definition bucket.
+        role.addToPolicy(new iam.PolicyStatement({
+          sid: "CheckUnusedLegacyDefinitionKeys",
+          actions: ["s3:ListBucket"],
+          resources: [`arn:aws:s3:::${bucket}`],
+          conditions: { StringEquals: { "s3:prefix": ["declared_fields.json", "definitions.json"] } },
+        }));
+        role.addToPolicy(new iam.PolicyStatement({
+          sid: "ReadRetainedEmbeddingStoreStatus",
+          actions: ["dynamodb:DescribeTable"],
+          resources: ["schema-embeddings-prod", "schema-embeddings-prod-canonical-v2"]
+            .map((name) => `arn:aws:dynamodb:${region}:${account}:table/${name}`),
+        }));
+      }
+
       return role;
     };
 

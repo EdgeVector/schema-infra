@@ -46,7 +46,7 @@ fi
 
 source "$(pwd)/scripts/deploy/canonical-vocabulary-phase.sh"
 CANONICAL_ROLLOUT_PHASE="$(canonical_vocabulary_phase)"
-if [ "$CANONICAL_ROLLOUT_PHASE" = dev ] && [ -e "${STATE_DIR}/prod-eligible" ]; then
+if [ "$CANONICAL_ROLLOUT_PHASE" != prod ] && [ -e "${STATE_DIR}/prod-eligible" ]; then
   rm -- "${STATE_DIR}/prod-eligible"
 fi
 
@@ -151,8 +151,8 @@ if [ "$KIND" = "code-only" ]; then
     schema_telemetry_stage_end dev_smoke "$stage_started"
   fi
 
-  if [ "$CANONICAL_ROLLOUT_PHASE" = dev ]; then
-    echo "Canonical vocabulary DEV phase selected; PROD remains unchanged."
+  if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then
+    echo "Canonical vocabulary phase $CANONICAL_ROLLOUT_PHASE holds the ordinary PROD deployment."
     exit 0
   fi
 
@@ -220,8 +220,8 @@ else
     schema_telemetry_stage_end dev_smoke "$stage_started"
   fi
 
-  if [ "$CANONICAL_ROLLOUT_PHASE" = dev ]; then
-    echo "Canonical vocabulary DEV phase selected; PROD remains unchanged."
+  if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then
+    echo "Canonical vocabulary phase $CANONICAL_ROLLOUT_PHASE holds the ordinary PROD deployment."
     exit 0
   fi
 

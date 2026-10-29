@@ -55,7 +55,8 @@ The isolated prefix avoids that obsolete file.
 
 Open `prod` through a separate reviewed source change after real DEV app operations pass.
 Keep the existing production checks, 5% canary, alarms, and 24-hour period.
-A rollback uses the retained previous version and its previous definition generation.
+A code-canary rollback uses the retained canonical baseline and the same definition generation.
+Legacy generation restoration requires a separate decision and data reconciliation after the atomic reset.
 Keep recovery data during the canary.
 
 ### Readiness hold
@@ -96,7 +97,7 @@ Tom approved retirement of the old PROD schema definitions on 2026-10-28.
 He selected a reviewed atomic reset before the code canary.
 This reset activates the new definition generation in one step.
 The 5% code canary does not cover that initial store transition.
-The primary and its archive stay unchanged.
+The primary and its archive stay unchanged, except the separately approved ordinary LastSecrets credential and metadata entry.
 
 The first source change provides candidate preparation only:
 
@@ -114,11 +115,37 @@ The IAM-only CDK context constructs no service stack and needs no Lambda assets.
 
 After candidate preparation, the next reviewed source change must identify the exact baseline version and code digest.
 It must also identify the retained recovery definitions and the expected old public version.
-Ordinary PROD developer-account declarations and registrations must pass before the atomic reset.
+Ordinary PROD developer-account and field declarations must pass before the atomic reset.
 The reset must use the observed alias revision and refuse an active canary or unexpected generation.
 Do not copy DEV definitions into PROD or rewrite a registry outside the common policy.
 Keep the old definitions, previous Lambda version, and old embedding store for recovery.
 The final release then uses the ordinary same-store 5% canary, alarms, and full 24-hour period.
+
+### Atomic reset release
+
+The intermediate `prod-reset` phase holds both ordinary PROD release paths.
+It does not open the canary or permit an environment override.
+The manual `Retire legacy PROD definitions` workflow requires accepted-main CI, CodeQL, and a successful current DEV deployment.
+It shares the normal deployment and PROD traffic concurrency controls.
+Its IAM change adds only exact definition-object reads, two absent-key checks, and the two embedding-store status reads.
+
+The reset controller fixes the reviewed legacy version 47, its code digest, and alias revision.
+It fixes canonical baseline 48, its code digest, release, namespace, and embedding store.
+It checks the retained immutable legacy S3 versions and the current legacy content against their reviewed hashes.
+It requires the complete 295 approved concepts, the ordinary 183-field declaration, its owner, and both alarms OK.
+Cold starts can rewrite identical seed images; content checks use canonical JSON hashes.
+
+Only the accepted-main PROD role can execute the revision-checked alias change from 47 to 48.
+The controller writes no definition object and deletes no old definition or embedding store.
+All public traffic activates the canonical generation in this atomic step, without a random store split.
+The alias description records the reset, without a code-canary clock.
+The controller checks public health, vocabulary, and the existing declaration afterward.
+An uncertain result never restores legacy traffic automatically after canonical writes can occur.
+A rerun recognizes only the exact completed reset marker and performs completion reads.
+
+After the real reset succeeds, a separate reviewed `prod` phase starts the ordinary same-store code canary.
+That release retains canonical baseline 48 for rollback, the 5% weight, both alarms, and the full 24-hour period.
+The later code canary does not cover the atomic reset itself.
 
 Existing app configs retain their data identities.
 A canonical name change does not move an existing record.
