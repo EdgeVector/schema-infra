@@ -222,7 +222,7 @@ def main():
             # One revision-checked pointer change, with no split across stores.
             # Never write, convert, import, or delete a definition object here.
             aws("lambda", "update-alias", "--function-name", FUNCTION, "--name", "live",
-                "--function-version", BASELINE, "--routing-config", "{}", "--description", MARKER,
+                "--function-version", BASELINE, "--routing-config", '{"AdditionalVersionWeights":{}}', "--description", MARKER,
                 "--revision-id", OLD_REVISION)
         after = alias()
         if after["FunctionVersion"] != BASELINE or after.get("Description") != MARKER:

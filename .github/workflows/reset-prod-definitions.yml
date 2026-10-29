@@ -40,7 +40,7 @@ jobs:
           done
           deploy_id="$(jq -r 'map(select(.workflowName == "deploy")) | max_by(.databaseId) | .databaseId' "$RUNNER_TEMP/runs.json")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$deploy_id/jobs?per_page=100" > "$RUNNER_TEMP/deploy-jobs.json"
-          jq -e '[.jobs[] | select(.name == "deploy-dev") | .steps[] | select(.name == "Deploy dev and smoke dev" and .conclusion == "success")] | length == 1' "$RUNNER_TEMP/deploy-jobs.json"
+          jq -e --arg sha "$GITHUB_SHA" '[.jobs[] | select(.name == "deploy-dev") | .steps[] | select(.name == ("DEV smoke passed " + $sha) and .conclusion == "success")] | length == 1' "$RUNNER_TEMP/deploy-jobs.json"
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc

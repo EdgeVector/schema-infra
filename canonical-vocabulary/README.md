@@ -126,6 +126,8 @@ The final release then uses the ordinary same-store 5% canary, alarms, and full 
 The intermediate `prod-reset` phase holds both ordinary PROD release paths.
 It does not open the canary or permit an environment override.
 The manual `Retire legacy PROD definitions` workflow requires accepted-main CI, CodeQL, and a successful current DEV deployment.
+The pipeline emits the exact DEV smoke revision only after the actual smoke command succeeds.
+The reset checks the corresponding explicit successful workflow step; an empty-diff deployment cannot supply that result.
 It shares the normal deployment and PROD traffic concurrency controls.
 Its IAM change adds only exact definition-object reads, two absent-key checks, and the two embedding-store status reads.
 

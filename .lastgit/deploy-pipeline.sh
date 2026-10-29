@@ -85,7 +85,7 @@ LAST_OID_FILE="${STATE_DIR}/last-deployed-oid"
 BASE_OID=""
 [ -f "$LAST_OID_FILE" ] && BASE_OID="$(head -1 "$LAST_OID_FILE" | tr -d '[:space:]')"
 
-if [ -n "${SCHEMA_DEPLOY_FORCE_KIND:-}" ]; then
+if [ -n "${SCHEMA_DEPLOY_FORCE_KIND:-}" ] && [ "$SCHEMA_DEPLOY_FORCE_KIND" != auto ]; then
   KIND="$SCHEMA_DEPLOY_FORCE_KIND"
   KIND_REASON="forced via SCHEMA_DEPLOY_FORCE_KIND"
 elif [ -z "$BASE_OID" ]; then
@@ -149,6 +149,9 @@ if [ "$KIND" = "code-only" ]; then
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
     bash ./scripts/deploy/smoke-dev.sh
     schema_telemetry_stage_end dev_smoke "$stage_started"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+      printf 'dev_smoke_revision=%s\n' "$OID" >> "$GITHUB_OUTPUT"
+    fi
   fi
 
   if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then
@@ -218,6 +221,9 @@ else
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
     bash ./scripts/deploy/smoke-dev.sh
     schema_telemetry_stage_end dev_smoke "$stage_started"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+      printf 'dev_smoke_revision=%s\n' "$OID" >> "$GITHUB_OUTPUT"
+    fi
   fi
 
   if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then

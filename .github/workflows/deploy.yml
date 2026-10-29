@@ -41,10 +41,10 @@ on:
         type: string
         default: ""
       force_kind:
-        description: "Force classification (infrastructure, code-only, or empty for auto)"
+        description: "Release classification (auto, infrastructure, or code-only)"
         type: choice
-        options: ["", "infrastructure", "code-only"]
-        default: ""
+        options: ["auto", "infrastructure", "code-only"]
+        default: "auto"
 
 permissions:
   contents: read
@@ -107,6 +107,7 @@ jobs:
           DEPLOY_ENV: dev
         run: bash scripts/deploy/restore-last-oid.sh
       - name: Deploy dev and smoke dev
+        id: dev_pipeline
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           LASTGIT_CI_OID: ${{ env.DEPLOY_SHA }}
@@ -117,6 +118,9 @@ jobs:
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
           SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
+      - name: DEV smoke passed ${{ env.DEPLOY_SHA }}
+        if: steps.dev_pipeline.outputs.dev_smoke_revision == env.DEPLOY_SHA
+        run: echo 'Actual DEV smoke passed for the selected source revision.' >> "$GITHUB_STEP_SUMMARY"
       - name: Save dev last-deployed-oid
         if: always()
         uses: actions/upload-artifact@v4
