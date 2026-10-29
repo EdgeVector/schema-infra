@@ -56,6 +56,8 @@ The isolated prefix avoids that obsolete file.
 Open `prod` through a separate reviewed source change after real DEV app operations pass.
 Keep the existing production checks, 5% canary, alarms, and 24-hour period.
 A code-canary rollback uses the retained canonical baseline and the same definition generation.
+The reviewed atomic reset established canonical version 48 as that baseline.
+Retired legacy version 47 is not the rollback target for the canonical code canary.
 Legacy generation restoration requires a separate decision and data reconciliation after the atomic reset.
 Keep recovery data during the canary.
 
