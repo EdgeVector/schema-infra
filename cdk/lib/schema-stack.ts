@@ -369,6 +369,10 @@ exports.handler = async (event) => {
         // for offline DevCert verification. With none, /v1/apps 401s
         // every cert and owner_app_id on /v1/schemas is a passthrough.
         APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
+        // Public Ed25519 key: standard base64 of the raw 32 bytes.
+        // EdgeVector/lastdb-verifier@7e656bc485c8a0d89cbeaf6cd18c881acb730054 config/verifier-key.json
+        // LastSecrets: lastsecrets://lastdb-verifier-ed25519-public-20261026
+        APP_REGISTRY_VERIFIER_PUBKEY: "UD8XYysPD4r31t0IcKKCQvkssaICPyrpV8RKdZ+eANY=",
         // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
         // activates only when BOTH of the following are set:
         //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
