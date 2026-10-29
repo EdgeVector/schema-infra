@@ -24,6 +24,11 @@ GitHub is the gate of record for this repo since 2026-09-30.
   opens one GitHub issue labeled `schema-canary-rollback`. The runner never
   calls `kanban`. A host-local routine files the card. Do not add an
   `environment:` key.
+- `prepare-prod.yml`: manual accepted-main preparation for the approved definition retirement.
+  It requires current main CI and CodeQL, deploys the reviewed qualified-read IAM permission,
+  builds the core in CI, and checks a separate numbered PROD candidate.
+  It preserves the public version and does not open the PROD phase or start a canary.
+  The next reviewed source change controls the atomic store reset and the ordinary release.
 - `auto-deploy-on-fold.yml`: inert stub. Do not add a fold-triggered deploy
   without Tom.
 
