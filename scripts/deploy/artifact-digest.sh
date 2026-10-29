@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Canonical input-digest for schema-infra Lambda artifacts.
-# Sourced by ensure-artifact.sh; tests drive these functions directly.
+# Sourced by ensure-artifact.sh.
 # Changing any hashed file (or the fold pin / profile) must change the digest.
 
 schema_infra_sha256_file() {

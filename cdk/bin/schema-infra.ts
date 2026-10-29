@@ -9,7 +9,12 @@ const app = new cdk.App();
 
 const environment = Environment.fromName(app.node.tryGetContext("environment"));
 
-new SchemaServiceStack(app, `SchemaServiceStack-${environment.name}`, {
+// An IAM-only release does not need Lambda/model assets or construct a
+// service stack. It cannot change a service alias or definition store.
+const identityOnly = app.node.tryGetContext("identityOnly") === "true";
+if (identityOnly) {
+  if (environment.name !== "prod") throw new Error("IAM releases require the explicit prod context");
+} else new SchemaServiceStack(app, `SchemaServiceStack-${environment.name}`, {
   environment: environment.name,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
