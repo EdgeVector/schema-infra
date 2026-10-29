@@ -1,0 +1,70 @@
+name: Retire legacy PROD definitions
+
+# A separately reviewed atomic generation change. The later code release
+# still needs phase=prod and its ordinary same-store 5%/24-hour canary.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  id-token: write
+
+concurrency:
+  group: schema-infra-deploy
+  cancel-in-progress: false
+
+jobs:
+  retire-definitions:
+    if: github.ref == 'refs/heads/main'
+    concurrency:
+      group: schema-infra-prod-traffic
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+      - name: Require accepted-main CI, security and actual DEV deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/checks.json"
+          jq -e '.check_runs | map(select(.name == "ci-required")) | max_by(.started_at) | .status == "completed" and .conclusion == "success"' "$RUNNER_TEMP/checks.json"
+          gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --limit 100 --json workflowName,status,conclusion,databaseId > "$RUNNER_TEMP/runs.json"
+          for workflow in CodeQL deploy; do
+            jq -e --arg name "$workflow" 'map(select(.workflowName == $name)) | max_by(.databaseId) | .status == "completed" and .conclusion == "success"' "$RUNNER_TEMP/runs.json"
+          done
+          deploy_id="$(jq -r 'map(select(.workflowName == "deploy")) | max_by(.databaseId) | .databaseId' "$RUNNER_TEMP/runs.json")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$deploy_id/jobs?per_page=100" > "$RUNNER_TEMP/deploy-jobs.json"
+          jq -e --arg sha "$GITHUB_SHA" '[.jobs[] | select(.name == "deploy-dev") | .steps[] | select(.name == ("DEV smoke passed " + $sha) and .conclusion == "success")] | length == 1' "$RUNNER_TEMP/deploy-jobs.json"
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - name: Compile the IAM-only CDK entry point
+        run: npm ci && npm run build
+        working-directory: cdk
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployProd
+          aws-region: us-east-1
+      - name: Deploy only the reviewed read permissions
+        working-directory: cdk
+        run: npx cdk deploy SchemaInfraOidcStack --context environment=prod --context identityOnly=true --require-approval never
+      - name: Check and execute the exact atomic retirement
+        run: |
+          set -euo pipefail
+          python3 scripts/deploy/retire-prod-definitions.py --apply | tee "$RUNNER_TEMP/reset-output"
+          {
+            echo '### Atomic definition retirement'
+            echo '```text'
+            tail -n 1 "$RUNNER_TEMP/reset-output"
+            echo '```'
+            echo 'The public generation changed atomically. No code canary started in this job.'
+            echo 'The next reviewed prod phase requires the normal same-store 5% canary and full 24-hour period.'
+          } >> "$GITHUB_STEP_SUMMARY"
