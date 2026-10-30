@@ -4,7 +4,8 @@ The schema service enforces precise field definitions through one code policy fo
 New concepts enter through normal schema publication and field declaration.
 There is no special vocabulary signing key or vocabulary write endpoint.
 App identity, permission, proof-of-work, and burst-rate checks remain active.
-New schema and field registrations require an Exemem developer account and the registered app owner.
+New schema and field registrations require an Exemem developer account and the registered app owner in PROD.
+DEV accepts them without a developer account (`SCHEMA_OPEN_REGISTRATION`, Tom 2026-10-30).
 DEV has no hourly or daily new-schema count caps.
 Production retains its existing count caps.
 
