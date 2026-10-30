@@ -832,6 +832,34 @@ exports.handler = async (event) => {
     schemaServiceFn.addEnvironment("API_KEYS_TABLE", apiKeysTableName);
 
     // =====================================================
+    // Release verifier (EdgeVector/lastdb-verifier, docs/release-log.md).
+    //
+    // The registry hands each new release and each owner revocation to the
+    // verifier as one job on its public queue, and the v2 verification
+    // route points developers at the verifier's public release log. The
+    // registry is off the install trust path: it only stores and enqueues.
+    //
+    // VerifierStack-{dev,prod} deploy to the same region and account as
+    // this stack, so Fn.importValue resolves locally. The import also keeps
+    // the verifier from removing these exports while this stack uses them.
+    // =====================================================
+    schemaServiceFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "SendReleaseVerifierJobs",
+        actions: ["sqs:SendMessage"],
+        resources: [Fn.importValue(`LastdbVerifierPublicQueueArn-${envName}`)],
+      }),
+    );
+    schemaServiceFn.addEnvironment(
+      "RELEASE_VERIFIER_QUEUE_URL",
+      Fn.importValue(`LastdbVerifierPublicQueueUrl-${envName}`),
+    );
+    schemaServiceFn.addEnvironment(
+      "RELEASE_LOG_URL",
+      Fn.importValue(`LastdbVerifierLogUrl-${envName}`),
+    );
+
+    // =====================================================
     // Schema mutation gate observability.
     //
     // The schema service emits Rust tracing log fields with:
