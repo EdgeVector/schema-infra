@@ -658,6 +658,13 @@ exports.handler = async (event) => {
         methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
         integrationId: "ReleaseCompatIntegrationV2",
       },
+      {
+        // 307 to the release verifier's result for this release
+        // (`RELEASE_LOG_URL`/results/<release_id>.json).
+        path: "/v2/releases/{release_id}/verification",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "ReleaseVerificationIntegrationV2",
+      },
     ];
 
     for (const route of v2Routes) {
