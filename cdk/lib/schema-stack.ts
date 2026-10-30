@@ -356,6 +356,11 @@ exports.handler = async (event) => {
         ...(environment.isDev
           ? { SCHEMA_DUAL_SIGNAL_CANONICALIZATION: "true" }
           : {}),
+        // Dev-only (Tom, 2026-10-30): accept new schema and field
+        // registrations without an Exemem developer account. Proof of work,
+        // quotas and the vocabulary policy still apply. The Lambda ignores
+        // this flag when ENVIRONMENT is prod, so prod keeps the account gate.
+        ...(environment.isDev ? { SCHEMA_OPEN_REGISTRATION: "true" } : {}),
         // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
         // block above for the pubkey fetch + ES256/Ed25519 note.
         //
