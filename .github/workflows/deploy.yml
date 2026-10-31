@@ -54,11 +54,17 @@ on:
         type: choice
         options: ["auto", "infrastructure", "code-only"]
         default: "auto"
+      revision:
+        description: "Main commit (full sha) to deploy. Empty = the main tip. It must be on main and pass ci-required."
+        type: string
+        default: ""
 
 permissions:
   contents: read
   id-token: write
   actions: read
+  # A dispatch checks the ci-required result of its revision.
+  checks: read
 
 concurrency:
   group: schema-infra-deploy
@@ -74,7 +80,8 @@ jobs:
       prod_eligible: ${{ steps.gate.outputs.eligible }}
       sha: ${{ steps.gate.outputs.sha }}
     # workflow_run: only a successful push run of ci-required on main.
-    # workflow_dispatch: only from main (the OIDC trust is main-only).
+    # workflow_dispatch: only from main (the OIDC trust is main-only), and
+    # only for a main revision whose ci-required passed (the step below).
     if: >-
       (github.event_name == 'workflow_run'
         && github.event.workflow_run.conclusion == 'success'
@@ -84,13 +91,37 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || inputs.revision || github.sha }}
     steps:
       - name: Guard prod input
         if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod' && inputs.confirm_prod != 'deploy-prod'
         run: |
           echo "::error::target=prod needs confirm_prod=deploy-prod"
           exit 1
+      # A dispatch skips the workflow_run CI condition above. Keep the same
+      # gate: the revision is on main and its newest ci-required run passed.
+      - name: Require a main revision that passed ci-required
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::revision must be a full 40-hex commit sha"
+            exit 1
+          fi
+          on_main="$(gh api "repos/$GITHUB_REPOSITORY/compare/${DEPLOY_SHA}...main?per_page=1" --jq .status)"
+          case "$on_main" in
+            ahead|identical) ;;
+            *) echo "::error::$DEPLOY_SHA is not on main (compare status: $on_main)"; exit 1 ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/commits/$DEPLOY_SHA/check-runs?check_name=ci-required&per_page=100" \
+            > "$RUNNER_TEMP/ci-required.json"
+          if ! jq -e '[.check_runs[] | select(.name == "ci-required")] | max_by(.started_at)
+              | .status == "completed" and .conclusion == "success"' "$RUNNER_TEMP/ci-required.json" >/dev/null; then
+            echo "::error::ci-required has not passed for $DEPLOY_SHA"
+            exit 1
+          fi
       - uses: actions/checkout@v5
         with:
           ref: ${{ env.DEPLOY_SHA }}

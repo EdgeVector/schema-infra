@@ -31,6 +31,10 @@ The catch-up starts nothing in these conditions:
 - A `deploy.yml` run is queued or running.
 - The newest finished `deploy.yml` run on main failed. A new main push or a person starts the next run.
 - PROD is current with main.
+- The newest `ci-required` run for the main revision did not pass.
+
+The catch-up passes that exact revision to `deploy.yml`. Every `workflow_dispatch` of `deploy.yml`
+checks that its revision is on main and that its newest `ci-required` run passed.
 
 A person can close a bump PR to stop that lastdb revision. The next lastdb change opens a new bump PR.
 If lastdb main does not contain the pin, `auto-deploy-on-fold.yml` fails. A person must check the pin.

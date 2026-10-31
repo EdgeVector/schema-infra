@@ -32,6 +32,8 @@ permissions:
   issues: write
   # The catch-up reads deploy artifacts and starts deploy.yml.
   actions: write
+  # The catch-up reads the ci-required result of the main revision.
+  checks: read
 
 concurrency:
   group: schema-infra-prod-traffic
