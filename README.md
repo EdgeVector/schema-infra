@@ -6,9 +6,10 @@ Standalone infrastructure for the FoldDB Schema Service (`schema.folddb.com`).
 
 `schema-infra` is canonical on GitHub (`EdgeVector/schema-infra`) since 2026-09-30.
 Pull requests, the `ci-required` check, and merges use GitHub. The old LastGit
-and Forgejo copies are frozen. Deploy automation is off: the LastGit deploy
-pipeline is retired and the GitHub deploy workflows are `workflow_dispatch`
-only. See [`.github/workflows/README.md`](.github/workflows/README.md).
+and Forgejo copies are frozen. A Schema Service change in `EdgeVector/lastdb`
+deploys on merge: an auto-merged PR moves the `fold` pin, then `deploy.yml`
+deploys DEV, smokes DEV, and follows the PROD canary rules. See
+[`.github/workflows/README.md`](.github/workflows/README.md).
 
 ## Overview
 
