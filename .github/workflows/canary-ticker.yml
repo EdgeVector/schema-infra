@@ -1,6 +1,6 @@
 name: canary-ticker
 
-# Promote or roll back the schema-infra prod canary.
+# Promote or roll back the schema-infra prod canary, then catch PROD up.
 #
 # The deploy workflow pins 5% of live traffic on the new Lambda version.
 # This workflow is the old 15-minute launchd ticker. It reads the live alias.
@@ -11,6 +11,13 @@ name: canary-ticker
 # This runner never opens folddb.sock and never calls kanban.
 #
 # A weight map that is not one key at 0.05 fails the tick and moves no alias.
+#
+# PROD catch-up: a deploy run defers PROD while a canary soaks. After a
+# successful tick, scripts/deploy/prod-catch-up.sh starts one deploy.yml run
+# with target=prod when the alias has no canary and PROD is behind main. That
+# run deploys DEV, smokes DEV, and pins the next 5% canary. The script starts
+# nothing while phase is not prod, while a schema-canary-rollback issue is
+# open, while a deploy run is active, or after a failed deploy run.
 #
 # DO NOT add an `environment:` key. The prod role trusts
 # repo:EdgeVector/schema-infra:ref:refs/heads/main only.
@@ -23,6 +30,8 @@ permissions:
   contents: read
   id-token: write
   issues: write
+  # The catch-up reads deploy artifacts and starts deploy.yml.
+  actions: write
 
 concurrency:
   group: schema-infra-prod-traffic
@@ -38,7 +47,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: main
-          fetch-depth: 1
+          # The catch-up classifies PROD's last deployed oid against main.
+          fetch-depth: 0
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::152335099025:role/SchemaInfraDeployProd
@@ -55,3 +65,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
         run: bash .lastgit/canary-ticker.sh
+      - name: PROD catch-up
+        env:
+          CANARY_WEIGHT: "0.05"
+          CANARY_SOAK_HOURS: "24"
+          GH_TOKEN: ${{ github.token }}
+          LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
+        run: bash scripts/deploy/prod-catch-up.sh

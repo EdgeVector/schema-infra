@@ -1,12 +1,49 @@
-name: auto-deploy-on-fold.yml (inert)
+name: auto-deploy-on-fold
 
-# INERT ON PURPOSE. This repo deploys to AWS prod. This workflow is
-# workflow_dispatch only and runs no deploy. Re-enabling automation needs Tom.
+# Move the `fold` pin when a Schema Service change merges in EdgeVector/lastdb
+# (Tom, 2026-10-31: "It should deploy on merge", dev first, then prod).
+#
+#   1. lastdb `notify-schema-infra.yml` sends repository_dispatch
+#      `lastdb-schema-service-changed` after a main push that touches a
+#      Lambda input. The 30-minute schedule catches a missed signal.
+#   2. scripts/deploy/fold-bump.sh compares the pin with lastdb main. It
+#      opens one PR only when a path in scripts/deploy/fold-lambda-inputs.txt
+#      changed. The PR changes only the gitlink, and auto-merge (squash) is on.
+#   3. The merge runs ci-required on main, then deploy.yml: DEV deploy, DEV
+#      smoke, then the PROD canary rules (see README.md in this directory).
+#
+# GH_PAT opens the PR. A PR that GITHUB_TOKEN opens does not start the
+# required checks. This workflow holds no AWS credentials and deploys nothing.
 on:
+  repository_dispatch:
+    types: [lastdb-schema-service-changed]
+  schedule:
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Two runs never race for the branch or open two PRs.
+concurrency:
+  group: auto-fold-bump
+  cancel-in-progress: false
+
 jobs:
-  inert:
+  bump:
+    name: bump
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - run: echo "Deploy automation is disabled. Decision pending with Tom."
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 1
+          submodules: false
+          token: ${{ secrets.GH_PAT }}
+      - name: Open a fold bump PR when a Schema Service input changed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          DISPATCH_SHA: ${{ github.event.client_payload.lastdb_sha }}
+        run: bash scripts/deploy/fold-bump.sh

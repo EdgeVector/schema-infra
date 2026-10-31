@@ -28,12 +28,67 @@
 #                                production mutation-gate alarm set
 #   SCHEMA_DEPLOY_FORCE_KIND     override the classifier (code-only|
 #                                infrastructure|no-impact) for drills
+#   SCHEMA_DEPLOY_BASE_FILE      classify against this oid file instead of
+#                                this environment's last-deployed-oid. A
+#                                target=prod dispatch gives the DEV job the
+#                                PROD base, so DEV deploys and smokes what
+#                                PROD will get even when DEV is current.
+#
+# PROD deferral: a weighted canary keeps its full soak. When the live alias
+# still soaks after the pre-prod tick, the PROD stage changes nothing, prints
+# "prod deferred: canary soaking", and the run succeeds. canary-ticker.yml
+# starts the PROD catch-up after the promotion (scripts/deploy/prod-catch-up.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/deploy/canary-lib.sh
 source "$(pwd)/scripts/deploy/canary-lib.sh"
 # shellcheck source=scripts/deploy/telemetry.sh
 source "$(pwd)/scripts/deploy/telemetry.sh"
+
+# Stop the PROD stage while a weighted canary still soaks (see the header).
+# The pre-prod tick runs first: it promotes a due canary or rolls back an
+# ALARM. An idle alias returns here and the PROD stage continues. A canary
+# that soaks (or became due after the tick) ends the run with success and no
+# PROD change. Any other alias state, or a failed alias read, exits 1 before
+# any PROD change.
+defer_prod_while_canary_soaks() {
+  local fn plan action old new promote msg
+  fn="$(schema_fn_name prod us-east-1 || true)"
+  if [ -z "${fn:-}" ] || [ "$fn" = None ]; then
+    return 0
+  fi
+  if ! plan="$(canary_alias_plan "$fn" us-east-1)"; then
+    echo "FAIL: cannot read or check the PROD live alias; no PROD change" >&2
+    exit 1
+  fi
+  IFS="$(printf '\t')" read -r action old new _ promote <<EOF
+$plan
+EOF
+  case "$action" in
+    idle)
+      return 0
+      ;;
+    soaking|due)
+      msg="prod deferred: canary soaking (version $new until $promote; primary $old)"
+      canary_log "$msg oid=$OID"
+      schema_telemetry_emit release_row "oid=$OID" "kind=$KIND" \
+        "skipped_deploy=true" "reason=prod_deferred_canary_soaking"
+      if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'prod_deferred=true\n' >> "$GITHUB_OUTPUT"
+      fi
+      if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        printf 'PROD deferred for %s: canary version %s soaks until %s. canary-ticker.yml starts the PROD catch-up after the promotion.\n' \
+          "$OID" "$new" "$promote" >> "$GITHUB_STEP_SUMMARY"
+      fi
+      echo "lastgit schema deploy-pipeline PASSED ($msg)"
+      exit 0
+      ;;
+    *)
+      echo "FAIL: PROD live alias canary state is $action; no PROD change" >&2
+      exit 1
+      ;;
+  esac
+}
 
 OID="${LASTGIT_CI_OID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 echo "== [schema staged-deploy] oid=$OID =="
@@ -82,8 +137,9 @@ fi
 # went live (CDK succeeded, smoke failed) creates stale state, and the next
 # deploy may incorrectly classify as no-impact.
 LAST_OID_FILE="${STATE_DIR}/last-deployed-oid"
+BASE_FILE="${SCHEMA_DEPLOY_BASE_FILE:-$LAST_OID_FILE}"
 BASE_OID=""
-[ -f "$LAST_OID_FILE" ] && BASE_OID="$(head -1 "$LAST_OID_FILE" | tr -d '[:space:]')"
+[ -f "$BASE_FILE" ] && BASE_OID="$(head -1 "$BASE_FILE" | tr -d '[:space:]')"
 
 if [ -n "${SCHEMA_DEPLOY_FORCE_KIND:-}" ] && [ "$SCHEMA_DEPLOY_FORCE_KIND" != auto ]; then
   KIND="$SCHEMA_DEPLOY_FORCE_KIND"
@@ -170,6 +226,7 @@ if [ "$KIND" = "code-only" ]; then
   if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
     echo "== canary ticker before prod =="
     bash "$(pwd)/.lastgit/canary-ticker.sh"
+    defer_prod_while_canary_soaks
   fi
 
   echo "== STAGE 3: code-publish PROD + canary pin =="
@@ -242,6 +299,7 @@ else
   if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
     echo "== canary ticker before prod =="
     bash "$(pwd)/.lastgit/canary-ticker.sh"
+    defer_prod_while_canary_soaks
   fi
 
   echo "== STAGE 3: deploy PROD + canary pin =="
