@@ -17,11 +17,15 @@
 #   - the newest finished deploy.yml run on main did not succeed (no retry
 #     loop; a new main push or a person starts the next run);
 #   - the classifier finds no deploy impact between PROD's last deployed oid
-#     and main.
+#     and main;
+#   - the newest ci-required run for that main revision did not pass.
 #
-# Env: GH_TOKEN (actions: write to start the run and read artifacts; issues:
-# read), GITHUB_REPOSITORY, AWS credentials for the PROD role (alias read
-# only). The checkout must have the main history (fetch-depth: 0).
+# The run gets that exact revision (deploy.yml input `revision`). deploy.yml
+# checks again that the revision is on main and passed ci-required.
+#
+# Env: GH_TOKEN (actions: write to start the run and read artifacts; checks
+# and issues: read), GITHUB_REPOSITORY, AWS credentials for the PROD role
+# (alias read only). The checkout must have the main history (fetch-depth: 0).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
@@ -102,6 +106,15 @@ if [ "$kind" = no-impact ]; then
     exit 0
 fi
 
+gh api "repos/$REPO/commits/$head_oid/check-runs?check_name=ci-required&per_page=100" \
+    > "$work/ci-required.json"
+ci="$(jq -r '[.check_runs[] | select(.name == "ci-required")] | max_by(.started_at) // {}
+    | "\(.status // "missing")/\(.conclusion // "none")"' "$work/ci-required.json")"
+if [ "$ci" != completed/success ]; then
+    say "none. ci-required for main ${head_oid:0:12} is $ci."
+    exit 0
+fi
+
 gh workflow run deploy.yml --repo "$REPO" --ref main \
-    -f target=prod -f confirm_prod=deploy-prod -f force_kind=auto
-say "started deploy.yml target=prod on main ${head_oid:0:12}. PROD base ${base:-none}; $kind: $reason."
+    -f target=prod -f confirm_prod=deploy-prod -f force_kind=auto -f "revision=$head_oid"
+say "started deploy.yml target=prod for main ${head_oid:0:12}. PROD base ${base:-none}; $kind: $reason."
