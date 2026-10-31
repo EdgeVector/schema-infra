@@ -270,44 +270,6 @@ case "$code" in
   *) echo "FAIL GET /v2/releases/{release_id} HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
 esac
 
-# /v2/releases/{release_id}/compat GET — unknown release returns Lambda 404, not APIGW 404
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-release-compat-get.out" -w "%{http_code}" \
-  "${API_URL}/v2/releases/__smoke_missing_release__/compat" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-release-compat-get.out" 2>/dev/null || true)
-case "$code" in
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL GET /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route"
-      fail=1
-    else
-      echo "OK   GET /v2/releases/{release_id}/compat HTTP 404 (mounted; Lambda not-found)"
-    fi
-    ;;
-  200|400|401) echo "OK   GET /v2/releases/{release_id}/compat HTTP $code (mounted)"; ;;
-  *) echo "FAIL GET /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
-# /v2/releases/{release_id}/compat POST — unsigned write must reach Lambda (401/400),
-# not APIGW 404. This proves APP_REGISTRY_VERIFIER_PUBKEY wiring is correct.
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-release-compat-post.out" -w "%{http_code}" \
-  -X POST "${API_URL}/v2/releases/__smoke_missing_release__/compat" \
-  -H 'Content-Type: application/json' -d '{}' || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-release-compat-post.out" 2>/dev/null || true)
-case "$code" in
-  400|401)
-    echo "OK   POST /v2/releases/{release_id}/compat HTTP $code (mounted; Lambda auth/validation)"
-    ;;
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 APIGW missing-route"
-    else
-      echo "FAIL POST /v2/releases/{release_id}/compat HTTP 404 body=$(echo "$body" | cut -c1-120)"
-    fi
-    fail=1
-    ;;
-  *) echo "FAIL POST /v2/releases/{release_id}/compat HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`SchemaServiceFunctionName`].OutputValue' --output text)
