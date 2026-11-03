@@ -4,10 +4,10 @@
   "sources": [
     {
       "repository": "EdgeVector/brain",
-      "revision": "8b3870253bb350d2dc41cee6b30438a9dc4e1a1b",
+      "revision": "6a3e326669e5d876924feaed7df2043b83318d79",
       "path": "src/canonical-fields.json",
-      "sha256": "0c2b16fdfd2c84a869d723d131507f99a72cc0f25cfa50c8828d734ea96b9448",
-      "concepts": 64
+      "sha256": "a88db536ddbcb7a3787fc33140f513b1e6db0ceb2035d1e7f9bebeab9b069525",
+      "concepts": 63
     },
     {
       "repository": "EdgeVector/fkanban",

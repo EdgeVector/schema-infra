@@ -34,7 +34,8 @@ No environment override opens production.
 
 The `canonical-v2/` atomic definition generation does not fall back to legacy definitions.
 The service starts with 113 seed concepts.
-The four source app manifests contain 183 unique concepts, with one seed overlap.
+The four source app manifests contain 182 unique concepts, with one seed overlap.
+Brain's list dropped `native_file_reference` (type `Any`) at 6a3e3266; it held 183 before.
 The common policy determines admission and concept reuse during app declarations.
 A source manifest is not an admission exception.
 
@@ -155,3 +156,19 @@ The later code canary does not cover the atomic reset itself.
 Existing app configs retain their data identities.
 A canonical name change does not move an existing record.
 Existing-home conversion requires a separate operation.
+
+### Catalog rebuild (2026-11-03)
+
+Decision A9 of the advisory Schema Service design removes `Any`.
+Tom chose to rebuild the stored catalog instead of converting it (`decision-2026-11-03-schema-service-any-stored-data-rebuild-from-feed`).
+PROD `canonical-v2/definitions.json` was rewritten on 2026-11-03 at 19:06Z, with If-Match on the version it was built from:
+
+- no schemas (54 before; 2 Brain schemas named `Any`);
+- the 113 seed concepts and the 182 concepts of the ordinary publisher declaration, 294 in all (442 before);
+- the ordinary declaration `approved-source-concepts-20261029` without `native_file_reference`, so 182 fields.
+
+A declared field's identity covers only its declaration id, name, type, and version, so the other 182 fields keep their identities.
+The prior object stays in S3 versioning (`ljNMqBxd6JwpRWVQ_PyYCy1CAlkaZls6`).
+The reset controller above checked the 295-concept and 183-field state of 2026-10-29; it is not rerun.
+App schemas come back through the catalog feed, which reads the PROD registry lists into its own image.
+The read routes do not serve the feed's records yet, so `GET /v1/schemas` lists no app schemas until they do.
