@@ -501,10 +501,16 @@ exports.handler = async (event) => {
     // Advice is read-only but walks the whole vocabulary for each field, so it
     // gets its own lower limit. An HTTP API has no per-caller limit without
     // WAF; this route limit keeps advice from crowding out the read routes.
+    //
+    // CfnStage.routeSettings is raw JSON: CDK passes the keys through
+    // unchanged, and CloudFormation accepts only the PascalCase names
+    // (defaultRouteSettings above is typed, so CDK renames its keys). The
+    // camelCase form failed the dev stack update with `Unrecognized field
+    // "throttlingBurstLimit"`.
     stage.routeSettings = {
       "POST /v1/advice/schema": {
-        throttlingBurstLimit: 20,
-        throttlingRateLimit: 10,
+        ThrottlingBurstLimit: 20,
+        ThrottlingRateLimit: 10,
       },
     };
 
