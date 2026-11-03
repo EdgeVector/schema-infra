@@ -434,6 +434,15 @@ exports.handler = async (event) => {
       throttlingBurstLimit: 200,
       throttlingRateLimit: 100,
     };
+    // Advice is read-only but walks the whole vocabulary for each field, so it
+    // gets its own lower limit. An HTTP API has no per-caller limit without
+    // WAF; this route limit keeps advice from crowding out the read routes.
+    stage.routeSettings = {
+      "POST /v1/advice/schema": {
+        throttlingBurstLimit: 20,
+        throttlingRateLimit: 10,
+      },
+    };
 
     // Root endpoint
     httpApi.addRoutes({
@@ -499,6 +508,13 @@ exports.handler = async (event) => {
         path: "/v1/schema/{schemaId}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SchemaGetSingularIntegrationV1",
+      },
+      {
+        // Advice for one draft schema declaration. Read-only; it never
+        // blocks a declare (design-lastdb-advisory-schema-service).
+        path: "/v1/advice/schema",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaAdviceIntegrationV1",
       },
       {
         path: "/v1/schemas/batch-check-reuse",
@@ -594,11 +610,16 @@ exports.handler = async (event) => {
     ];
 
     for (const route of v1Routes) {
-      httpApi.addRoutes({
+      const added = httpApi.addRoutes({
         path: route.path,
         methods: route.methods,
         integration: lambdaIntegration(route.integrationId),
       });
+      // The stage's route settings name the advice route by key, so the
+      // route must exist before the stage update.
+      if (route.path === "/v1/advice/schema") {
+        added.forEach((adviceRoute) => stage.node.addDependency(adviceRoute));
+      }
     }
 
     // =====================================================
