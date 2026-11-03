@@ -14,6 +14,8 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as events from "aws-cdk-lib/aws-events";
+import * as eventsTargets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -361,6 +363,11 @@ exports.handler = async (event) => {
         // quotas and the vocabulary policy still apply. The Lambda ignores
         // this flag when ENVIRONMENT is prod, so prod keeps the account gate.
         ...(environment.isDev ? { SCHEMA_OPEN_REGISTRATION: "true" } : {}),
+        // Dev-only: run the catalog feed (design-lastdb-advisory-schema-service,
+        // section 8). The schedule below invokes it; without this flag the
+        // Lambda answers the schedule with {"enabled": false} and reads
+        // nothing. Prod stays off until the feed has run in dev.
+        ...(environment.isDev ? { SCHEMA_CATALOG_FEED: "true" } : {}),
         // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
         // block above for the pubkey fetch + ES256/Ed25519 note.
         //
@@ -402,6 +409,63 @@ exports.handler = async (event) => {
     new CfnOutput(this, "SchemaServiceCandidateVersion", {
       value: schemaServiceFn.currentVersion.version,
       description: "Published candidate; production traffic stays on the preserved live version",
+    });
+
+    // =====================================================
+    // Catalog feed schedule (design-lastdb-advisory-schema-service, section 8)
+    // =====================================================
+    // EventBridge invokes the `live` alias with a synthetic API Gateway v2
+    // event for POST /v1/internal/catalog-feed, so the event goes through the
+    // Lambda's normal dispatcher. The HTTP API below does not route that path,
+    // and the Lambda answers 404 unless requestContext.apiId is the sentinel
+    // below, so only this rule reaches the feed. The rule is enabled in dev
+    // only, and SCHEMA_CATALOG_FEED (dev only, above) turns the run on.
+    //
+    // A failed run is not retried: each run reads the stored feed image and
+    // writes it back conditionally, so the next run starts from the last
+    // complete one. maxEventAge keeps a delayed invocation from overlapping
+    // the next scheduled run.
+    const catalogFeedPath = "/v1/internal/catalog-feed";
+    const catalogFeedRouteKey = `POST ${catalogFeedPath}`;
+    const catalogFeedUserAgent = "eventbridge-schema-catalog-feed";
+    new events.Rule(this, "SchemaCatalogFeedSchedule", {
+      description: "Runs the Schema Service catalog feed (registry lists to catalog records)",
+      schedule: events.Schedule.rate(Duration.minutes(5)),
+      enabled: environment.isDev,
+      targets: [
+        new eventsTargets.LambdaFunction(schemaServiceLive, {
+          retryAttempts: 0,
+          maxEventAge: Duration.minutes(4),
+          event: events.RuleTargetInput.fromObject({
+            version: "2.0",
+            routeKey: catalogFeedRouteKey,
+            rawPath: catalogFeedPath,
+            rawQueryString: "",
+            headers: {
+              "content-type": "application/json",
+              "user-agent": catalogFeedUserAgent,
+            },
+            requestContext: {
+              // Must match SCHEDULE_API_ID in
+              // schema_service/crates/server_lambda/src/catalog_feed.rs.
+              apiId: "catalog-feed-schedule",
+              requestId: events.EventField.eventId,
+              routeKey: catalogFeedRouteKey,
+              stage: "$default",
+              time: events.EventField.time,
+              http: {
+                method: "POST",
+                path: catalogFeedPath,
+                protocol: "HTTP/1.1",
+                sourceIp: "127.0.0.1",
+                userAgent: catalogFeedUserAgent,
+              },
+            },
+            isBase64Encoded: false,
+            body: "",
+          }),
+        }),
+      ],
     });
 
     // Every route points at the `live` alias (not $LATEST), so canary weights
