@@ -371,11 +371,13 @@ exports.handler = async (event) => {
         // quotas and the vocabulary policy still apply. The Lambda ignores
         // this flag when ENVIRONMENT is prod, so prod keeps the account gate.
         ...(environment.isDev ? { SCHEMA_OPEN_REGISTRATION: "true" } : {}),
-        // Dev-only: run the catalog feed (design-lastdb-advisory-schema-service,
+        // Run the catalog feed (design-lastdb-advisory-schema-service,
         // section 8). The schedule below invokes it; without this flag the
         // Lambda answers the schedule with {"enabled": false} and reads
-        // nothing. Prod stays off until the feed has run in dev.
-        ...(environment.isDev ? { SCHEMA_CATALOG_FEED: "true" } : {}),
+        // nothing. Each environment reads its own registry lists. Prod turned
+        // on after the dev feed ran and the dev catalog was rebuilt from it
+        // (2026-11-03).
+        SCHEMA_CATALOG_FEED: "true",
         // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
         // block above for the pubkey fetch + ES256/Ed25519 note.
         //
@@ -426,8 +428,9 @@ exports.handler = async (event) => {
     // event for POST /v1/internal/catalog-feed, so the event goes through the
     // Lambda's normal dispatcher. The HTTP API below does not route that path,
     // and the Lambda answers 404 unless requestContext.apiId is the sentinel
-    // below, so only this rule reaches the feed. The rule is enabled in dev
-    // only, and SCHEMA_CATALOG_FEED (dev only, above) turns the run on.
+    // below, so only this rule reaches the feed. SCHEMA_CATALOG_FEED (above)
+    // turns the run on. During a prod canary the rule reaches the new version
+    // only at the canary weight; the previous version may not have the route.
     //
     // A failed run is not retried: each run reads the stored feed image and
     // writes it back conditionally, so the next run starts from the last
@@ -439,7 +442,7 @@ exports.handler = async (event) => {
     new events.Rule(this, "SchemaCatalogFeedSchedule", {
       description: "Runs the Schema Service catalog feed (registry lists to catalog records)",
       schedule: events.Schedule.rate(Duration.minutes(5)),
-      enabled: environment.isDev,
+      enabled: true,
       targets: [
         new eventsTargets.LambdaFunction(schemaServiceLive, {
           retryAttempts: 0,
