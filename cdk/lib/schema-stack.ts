@@ -174,6 +174,10 @@ export class SchemaServiceStack extends Stack {
     // The layer asset directory is populated by build.sh — it downloads
     // the five files fastembed needs (model.onnx + four tokenizer
     // files) from the pinned HF revision into hf-hub 0.4 cache layout.
+    //
+    // The layer also holds ONNX Runtime at /opt/lib/libonnxruntime.so for
+    // the same reason: it changes only with an `ort` bump, and linked in it
+    // was about 7 MB of the 15 MiB function zip bar.
     // =====================================================
     const fastembedLayer = new lambda.LayerVersion(this, "FastembedModelLayer", {
       code: lambda.Code.fromAsset(
@@ -182,7 +186,7 @@ export class SchemaServiceStack extends Stack {
       compatibleRuntimes: [lambda.Runtime.PROVIDED_AL2023],
       compatibleArchitectures: [lambda.Architecture.X86_64],
       description:
-        "fastembed all-MiniLM-L6-v2 ONNX model + tokenizer files at /opt/fastembed_cache/",
+        "fastembed all-MiniLM-L6-v2 ONNX model + tokenizer files at /opt/fastembed_cache/, ONNX Runtime at /opt/lib/",
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
@@ -324,6 +328,10 @@ exports.handler = async (event) => {
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
+        // ONNX Runtime from the fastembed layer (scripts/deploy/ensure-layer.sh).
+        // The binary loads it at run time instead of linking it in; without
+        // the file, embedder init fails and the Lambda runs without embeddings.
+        ORT_DYLIB_PATH: "/opt/lib/libonnxruntime.so",
         OBS_SENTRY_DSN: obsSentryDsn,
         OBS_SENTRY_RELEASE: obsSentryRelease,
         OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
