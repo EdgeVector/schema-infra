@@ -523,6 +523,11 @@ exports.handler = async (event) => {
         ThrottlingBurstLimit: 20,
         ThrottlingRateLimit: 10,
       },
+      // A new portable schema pin reads the durable catalog definition image.
+      "PUT /v1/schema-versions/{id}": {
+        ThrottlingBurstLimit: 20,
+        ThrottlingRateLimit: 10,
+      },
     };
 
     // Root endpoint
@@ -589,6 +594,11 @@ exports.handler = async (event) => {
         path: "/v1/schema/{schemaId}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SchemaGetSingularIntegrationV1",
+      },
+      {
+        path: "/v1/schema-versions/{id}",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+        integrationId: "PortableSchemaVersionIntegrationV1",
       },
       {
         // Advice for one draft schema declaration. Read-only; it never
@@ -696,10 +706,9 @@ exports.handler = async (event) => {
         methods: route.methods,
         integration: lambdaIntegration(route.integrationId),
       });
-      // The stage's route settings name the advice route by key, so the
-      // route must exist before the stage update.
-      if (route.path === "/v1/advice/schema") {
-        added.forEach((adviceRoute) => stage.node.addDependency(adviceRoute));
+      // The stage's route settings reference these routes by key.
+      if (route.path === "/v1/advice/schema" || route.path === "/v1/schema-versions/{id}") {
+        added.forEach((throttledRoute) => stage.node.addDependency(throttledRoute));
       }
     }
 
