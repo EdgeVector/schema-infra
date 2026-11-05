@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke tests for schema-infra after deploy.
+# Smoke checks for schema-infra after deploy.
 # Exit 0 only if critical surfaces respond as expected on the NEW stack.
 set -euo pipefail
 
@@ -38,9 +38,10 @@ echo "== schema smoke-$ENVIRONMENT against $API_URL =="
 
 fail=0
 check() {
-  local path="$1" expect_code="$2" expect_substr="${3:-}"
+  local path="$1" expect_code="$2" expect_substr="$3"
+  shift 3
   local code body
-  body=$(curl -sS -m 45 -w "\n%{http_code}" "${API_URL}${path}" || echo -e "\n000")
+  body=$(curl -sS -m 45 -w "\n%{http_code}" "$@" "${API_URL}${path}" || echo -e "\n000")
   code=$(echo "$body" | tail -1)
   body=$(echo "$body" | sed '$d')
   if [ "$code" != "$expect_code" ]; then
@@ -60,6 +61,14 @@ check() {
 check "/v1/health" "200" "healthy"
 check "/health" "200" "healthy"
 check "/v1/schemas" "200" "schemas"
+
+# DEV serves the candidate at full weight. A malformed ID exercises gateway
+# routing and Lambda admission without creating a version in the registry.
+if [ "$ENVIRONMENT" = "dev" ]; then
+  check "/v1/schema-versions/invalid" "400" "invalid portable schema ID"
+  check "/v1/schema-versions/invalid" "400" "invalid portable schema ID" \
+    -X PUT -H 'Content-Type: application/json' -d '{"catalog_id":"invalid"}'
+fi
 
 # Dead planes must NOT be served by Lambda as success (APIGW or Lambda 404 both OK)
 # After canary CDK: APIGW 404 for unmounted routes. Before: Lambda may return JSON 404.
