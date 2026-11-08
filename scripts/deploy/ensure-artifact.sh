@@ -3,8 +3,8 @@
 # it exactly once per digest (design-schema-lambda-fast-deployment §1).
 #
 # The input digest identifies everything that can change the artifact:
-#   fold submodule pin OID + container build recipe + remote build driver +
-#   build profile. One digest → one build → one immutable cached zip + manifest,
+#   fold pin, container recipe, build lib, builder-image script, and profile.
+#   One digest → one build → one immutable cached zip + manifest,
 #   reused by dev, prod, and every later release that pins the same inputs
 #   (the terminal proof's builds_for_digest=1).
 #
@@ -43,7 +43,6 @@ if [ -z "$FOLD_PIN" ]; then
     exit 1
 fi
 RECIPE_SHA="$(sha256_file scripts/lambda-container-build.sh)"
-DRIVER_SHA="$(sha256_file scripts/remote-native-build.sh)"
 LIB_SHA="$(sha256_file scripts/lambda-container-build-lib.sh)"
 BUILDER_SHA="$(sha256_file scripts/ensure-builder-image.sh)"
 INPUT_DIGEST="$(schema_infra_input_digest "$SCRIPT_DIR" "$FOLD_PIN" "$PROFILE")"
@@ -78,7 +77,6 @@ emit_manifest() {
   "schema_infra_oid": "$(git rev-parse HEAD)",
   "fold_oid": "$FOLD_PIN",
   "build_recipe_sha256": "$RECIPE_SHA",
-  "build_driver_sha256": "$DRIVER_SHA",
   "build_lib_sha256": "$LIB_SHA",
   "build_builder_sha256": "$BUILDER_SHA",
   "profile": "$PROFILE",
@@ -86,7 +84,6 @@ emit_manifest() {
   "artifact_code_sha256_b64": "$zip_b64",
   "artifact_size_bytes": $zip_size,
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "builder": "${SCHEMA_BUILD_REMOTE_HOST:+remote:$SCHEMA_BUILD_REMOTE_HOST}",
   "cache": "$cache_state"
 }
 EOF
@@ -114,17 +111,9 @@ if [ -s "$ZIP_CACHED" ] && [ -s "$MANIFEST" ]; then
     echo "WARN: cached artifact digest mismatch (want=$want got=$got) — rebuilding" >&2
 fi
 
-# Cache miss: build once (local Docker by default; remote native x86_64 only
-# when SCHEMA_BUILD_REMOTE_HOST names a non-PC host), then freeze the result.
-# The PC default was retired 2026-09-29 — see build.sh.
-SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-}"
-export SCHEMA_BUILD_REMOTE_HOST
+# Cache miss: build once in the local Docker path, then freeze the result.
 stage_started="$(schema_telemetry_stage_start artifact_build)"
-if [ -n "${SCHEMA_BUILD_REMOTE_HOST:-}" ]; then
-    BUILD_PROFILE="$PROFILE" "$SCRIPT_DIR/scripts/remote-native-build.sh" "$FOLD_PIN" "$SCRIPT_DIR/fold"
-else
-    BUILD_PROFILE="$PROFILE" "$SCRIPT_DIR/build.sh" "$PROFILE" >/dev/null
-fi
+BUILD_PROFILE="$PROFILE" "$SCRIPT_DIR/build.sh" "$PROFILE" >/dev/null
 schema_telemetry_stage_end artifact_build "$stage_started"
 
 if [ ! -s "$IN_TREE_ZIP" ]; then

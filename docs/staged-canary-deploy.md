@@ -17,7 +17,7 @@
    - A host-local routine (`scripts/deploy/file-canary-rollback-cards.sh`) files one kanban card from that issue. The GitHub runner never opens `folddb.sock` and never calls `kanban`.
    - The alias `Description` stores the UTC start time, previous version, new version, and weight. The weighted alias update writes this proof.
    - The GitHub ticker uses the alias `RevisionId` for each promotion or rollback. A concurrent alias change refuses the update.
-   - The AWS `get-alias` response has no `LastModified` field. A runner-local state file is not the record.
+   - The AWS `get-alias` response has no `LastModified` field.
 
 ## Previous version: retained, never substituted
 
@@ -75,8 +75,7 @@ scripts/deploy/install-canary-rollback-card-launchd.sh status
 
 By default, CDK creates an AWS S3 bucket for `SCHEMA_STORE_BUCKET`. To deploy the
 Schema Service Lambda against a Cloudflare R2/S3-compatible registry store, set
-the full deploy-time config together before running `deploy.sh` or the LastGit
-deploy watcher:
+the full deploy-time config together before running `deploy.sh`:
 
 | Variable | Meaning |
 |---|---|
@@ -89,22 +88,6 @@ deploy watcher:
 Do not export raw R2 key values into the deploy environment. CDK emits Lambda
 environment values for the two credential variables as CloudFormation dynamic
 references to Secrets Manager.
-
-## Ops
-
-```bash
-# Install or repair merge-triggered deploy watcher.
-.lastgit/install-deploy-launchd.sh install
-.lastgit/install-deploy-launchd.sh status
-
-# Install or repair canary ticker, then verify the loaded script/log.
-.lastgit/install-canary-ticker-launchd.sh install
-.lastgit/install-canary-ticker-launchd.sh status
-
-# State / logs
-ls ~/.lastgit/deploy-schema-infra/
-```
-
 
 ## Adopt an existing canary without clock proof
 

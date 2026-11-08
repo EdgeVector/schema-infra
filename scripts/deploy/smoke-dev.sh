@@ -203,7 +203,7 @@ case "$code" in
     ;;
 esac
 
-# /v2 registry routes must reach Lambda, not APIGW 404. Empty canonical-v1 returns [],
+# /v2 registry routes must reach Lambda, not APIGW 404. An empty registry returns [],
 # not gateway {"message":"Not Found"}. Any Lambda 4xx/2xx proves the route is mounted.
 code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-apps-list.out" -w "%{http_code}" \
   "${API_URL}/v2/apps" || echo 000)

@@ -23,7 +23,6 @@
 #                                with a different OIDC role per environment)
 #   CANARY_SOAK_HOURS=24         canary soak duration
 #   CANARY_WEIGHT=0.05           fraction of prod traffic on new version
-#   CANARY_STATE_FROM_ALIAS=1    ticker reads the live alias (GitHub)
 #   SCHEMA_CANARY_ALARM_NAMES    optional override; defaults to the required
 #                                production mutation-gate alarm set
 #   SCHEMA_DEPLOY_FORCE_KIND     override the classifier (code-only|
@@ -167,7 +166,7 @@ fi
 if [ "$KIND" = "infrastructure" ] && [ -f .gitmodules ] && [ "${LASTGIT_DEPLOY_SKIP_SUBMODULE:-}" != "1" ]; then
   # Only the CDK path needs the fold submodule (Code.fromAsset + layer
   # inputs). Code-only releases read the pin from the gitlink and consume
-  # the cached/remote-built artifact directly.
+  # the cached artifact directly.
   git submodule update --init --recursive
 fi
 
@@ -183,7 +182,7 @@ DEV_CODE_SHA=""
 PROD_NEW_VER=""
 PROD_CODE_SHA=""
 OLD_VER=""
-PIN_RC=1          # 0 = weighted canary pin in place (soak state is written)
+PIN_RC=1          # 0 = weighted canary pin in place
 
 if [ "$KIND" = "code-only" ]; then
   # ---------- CODE-ONLY: publish, never CDK ----------
@@ -205,9 +204,6 @@ if [ "$KIND" = "code-only" ]; then
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
     bash ./scripts/deploy/smoke-dev.sh
     schema_telemetry_stage_end dev_smoke "$stage_started"
-    if [ -n "${GITHUB_OUTPUT:-}" ]; then
-      printf 'dev_smoke_revision=%s\n' "$OID" >> "$GITHUB_OUTPUT"
-    fi
   fi
 
   if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then
@@ -223,11 +219,9 @@ if [ "$KIND" = "code-only" ]; then
     exit 0
   fi
 
-  if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
-    echo "== canary ticker before prod =="
-    bash "$(pwd)/.lastgit/canary-ticker.sh"
-    defer_prod_while_canary_soaks
-  fi
+  echo "== canary ticker before prod =="
+  bash "$(pwd)/.lastgit/canary-ticker.sh"
+  defer_prod_while_canary_soaks
 
   echo "== STAGE 3: code-publish PROD + canary pin =="
   export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
@@ -278,9 +272,6 @@ else
     stage_started="$(schema_telemetry_stage_start dev_smoke)"
     bash ./scripts/deploy/smoke-dev.sh
     schema_telemetry_stage_end dev_smoke "$stage_started"
-    if [ -n "${GITHUB_OUTPUT:-}" ]; then
-      printf 'dev_smoke_revision=%s\n' "$OID" >> "$GITHUB_OUTPUT"
-    fi
   fi
 
   if [ "$CANONICAL_ROLLOUT_PHASE" != prod ]; then
@@ -296,11 +287,9 @@ else
     exit 0
   fi
 
-  if [ "${CANARY_STATE_FROM_ALIAS:-}" = "1" ]; then
-    echo "== canary ticker before prod =="
-    bash "$(pwd)/.lastgit/canary-ticker.sh"
-    defer_prod_while_canary_soaks
-  fi
+  echo "== canary ticker before prod =="
+  bash "$(pwd)/.lastgit/canary-ticker.sh"
+  defer_prod_while_canary_soaks
 
   echo "== STAGE 3: deploy PROD + canary pin =="
   export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
@@ -354,25 +343,15 @@ stage_started="$(schema_telemetry_stage_start prod_smoke)"
 bash ./scripts/deploy/smoke-dev.sh prod
 schema_telemetry_stage_end prod_smoke "$stage_started"
 
-# ---------- 5. Soak state + release evidence ----------
-STARTED=$(canary_ts)
-export CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
-PROMOTE_AFTER=$(python3 - <<PY
-from datetime import datetime, timedelta, timezone
-import os
-h = float(os.environ.get("CANARY_SOAK_HOURS", "24"))
-print((datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-)
-# Soak state only when a weighted pin is really in place: the ticker must
-# never promote or roll back against a version the alias does not serve.
+# ---------- 5. Release evidence ----------
+# The live alias Description is the soak record. The ticker promotes or
+# rolls back from that alias. This message only records whether a weighted
+# pin is in place.
 if [ "${PIN_RC:-1}" -eq 0 ] && [ -n "${OLD_VER:-}" ] && [ "$OLD_VER" != "$NEW_VER" ] && [ "$OLD_VER" != '$LATEST' ] && [ "$OLD_VER" != "None" ]; then
-  write_canary_state "$OID" "${OLD_VER:-}" "$NEW_VER" "$FN" "us-east-1" "$STARTED" "$PROMOTE_AFTER"
-  canary_log "canary soak until $PROMOTE_AFTER (CANARY_SOAK_HOURS=${CANARY_SOAK_HOURS})"
-  SOAK_MSG="prod canary soaking until $PROMOTE_AFTER"
+  canary_log "canary soak for ${CANARY_SOAK_HOURS:-24}h (alias clock is the record)"
+  SOAK_MSG="prod canary soaking"
 else
-  clear_canary_state
-  canary_log "canary: no weighted pin (old==new or missing) — no soak state"
+  canary_log "canary: no weighted pin (old==new or missing)"
   SOAK_MSG="prod deploy; no canary pin needed"
 fi
 
@@ -395,6 +374,3 @@ schema_telemetry_emit release_row \
 # last-deployed-oid was already written after CDK deploy (before smoke), so
 # we don't need to write it again here on success.
 echo "lastgit schema deploy-pipeline PASSED ($SOAK_MSG)"
-if [ "$KIND" != "code-only" ]; then
-  echo "Promote via: .lastgit/canary-ticker.sh (launchd) or manual scripts/deploy promote"
-fi

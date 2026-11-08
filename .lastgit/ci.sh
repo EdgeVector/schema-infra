@@ -3,14 +3,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Compatibility guard for older LastGit watchers: deploy-pipeline statuses must
-# run the deploy script, never the merge gate. Newer LastGit resolves
-# `.lastgit/<context>.sh` directly; this branch catches stale runners that still
-# invoke `.lastgit/ci.sh` for every context.
-if [ "${LASTGIT_CI_CONTEXT:-ci-required}" = "deploy-pipeline" ]; then
-  exec .lastgit/deploy-pipeline.sh
-fi
-
 shopt -s nullglob 2>/dev/null || true
 echo "== shell syntax =="
 for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
@@ -21,7 +13,7 @@ for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
 done
 echo "== Python syntax =="
 PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/schema-python-compile" \
-  python3 -m py_compile scripts/deploy/canary-alias-state.py scripts/deploy/canary-definition-store.py scripts/deploy/check-schema-candidate.py scripts/deploy/prepare-prod-candidate.py scripts/deploy/retire-prod-definitions.py
+  python3 -m py_compile scripts/deploy/canary-alias-state.py scripts/deploy/canary-definition-store.py scripts/deploy/check-schema-candidate.py
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

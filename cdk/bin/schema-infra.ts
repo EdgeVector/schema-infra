@@ -11,6 +11,7 @@ const environment = Environment.fromName(app.node.tryGetContext("environment"));
 
 // An IAM-only release does not need Lambda/model assets or construct a
 // service stack. It cannot change a service alias or definition store.
+// npx cdk deploy SchemaInfraOidcStack --context environment=prod --context identityOnly=true
 const identityOnly = app.node.tryGetContext("identityOnly") === "true";
 if (identityOnly) {
   if (environment.name !== "prod") throw new Error("IAM releases require the explicit prod context");
@@ -20,7 +21,7 @@ if (identityOnly) {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: environment.region,
   },
-  description: `FoldDB Schema Service Infrastructure (${environment.name})`,
+  description: `LastDB Schema Service Infrastructure (${environment.name})`,
 });
 
 // Account-global IAM stack for the GitHub Actions OIDC provider + the

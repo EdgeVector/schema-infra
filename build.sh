@@ -3,9 +3,9 @@
 # Build script for schema service infrastructure.
 #
 # Drives the full pre-deploy artifact assembly:
-#   1. Init / update the `fold/` submodule (the EdgeVector/fold monorepo,
-#      pinned to main). Contains schema_service crates + fold_db crates
-#      in one cargo workspace, so no sibling-fold_db checkout is needed.
+#   1. Init / update the `fold/` submodule (the EdgeVector/lastdb monorepo,
+#      pinned to main). Contains schema_service and lastdb_node
+#      in one cargo workspace, so no sibling checkout is needed.
 #   2. Build the Lambda zip from `fold/schema_service/crates/server_lambda/`
 #      (runs cargo-lambda inside Amazon Linux 2023 so ort-sys, which
 #      fastembed pulls in, links against the Lambda runtime glibc). Cargo
@@ -52,9 +52,9 @@ echo "fold submodule at: $(git -C "$FOLD_DIR" rev-parse --short HEAD)"
 #
 # Layout inside the container:
 #   /build/schema-infra/         ← this repo
-#   /build/schema-infra/fold/    ← submodule (fold monorepo, self-contained;
-#                                  contains both schema_service and fold_db
-#                                  crates as one cargo workspace). Cargo
+#   /build/schema-infra/fold/    ← submodule (lastdb monorepo, self-contained;
+#                                  contains schema_service and lastdb_node
+#                                  as one cargo workspace). Cargo
 #                                  intermediates are not written to this bind
 #                                  mount to avoid shared target-dir races.
 # =============================================================
@@ -105,52 +105,27 @@ copy_mirror_lambda_artifact() {
     rsync -a --delete "$mirror_lambda_dir"/ "$FOLD_DIR/target/lambda"/
 }
 
-# Default builder: local Docker (--platform linux/amd64, QEMU on Apple
-# Silicon). The gaming-PC default (ssh Host `pc`) was retired 2026-09-29.
-# Opt in to a remote native x86_64 builder for a non-PC host by exporting
-# SCHEMA_BUILD_REMOTE_HOST=<ssh-host-alias>. QEMU builds can wedge; run
-# production deploys through CI or another native x86_64 host.
-SCHEMA_BUILD_REMOTE_HOST="${SCHEMA_BUILD_REMOTE_HOST-}"
-export SCHEMA_BUILD_REMOTE_HOST
-
-if [ -n "${SCHEMA_BUILD_REMOTE_HOST:-}" ]; then
-    # Deploy-path decision decision-schema-infra-deploy-path-native-x86-pc:
-    # run the identical container build on a native x86_64 Linux builder.
-    # The pin comes from the committed gitlink so the remote build cannot
-    # drift from what this checkout pins, even before submodule init.
-    echo ""
-    echo "=== Building Lambda zip (remote native x86_64: $SCHEMA_BUILD_REMOTE_HOST) ==="
-    FOLD_PIN="$(git -C "$SCRIPT_DIR" ls-tree HEAD fold | awk '{print $3}')"
-    if [ -z "$FOLD_PIN" ]; then
-        echo "ERROR: could not resolve fold submodule pin from git ls-tree" >&2
-        exit 1
-    fi
-    stage_started="$(schema_telemetry_stage_start build)"
-    BUILD_PROFILE="$PROFILE" "$SCRIPT_DIR/scripts/remote-native-build.sh" "$FOLD_PIN" "$FOLD_DIR"
-    schema_telemetry_stage_end build "$stage_started"
-else
-    if needs_docker_mirror; then
-        prepare_docker_mirror
-    fi
-
-    echo ""
-    echo "=== Building Lambda zip (Docker: schema-infra-lambda-builder) ==="
-    stage_started="$(schema_telemetry_stage_start build)"
-    BUILDER_IMAGE="$(bash "$SCRIPT_DIR/scripts/ensure-builder-image.sh")"
-    docker run --rm \
-        --platform linux/amd64 \
-        -v "$DOCKER_SCRIPT_DIR":/build/schema-infra \
-        -w /build/schema-infra/fold \
-        -e CARGO_HOME=/build/schema-infra/.docker-cache/cargo \
-        -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
-        -e BUILD_PROFILE="$PROFILE" \
-        -e GH_PAT="${GH_PAT:-}" \
-        "$BUILDER_IMAGE" \
-        bash /build/schema-infra/scripts/lambda-container-build.sh
-    schema_telemetry_stage_end build "$stage_started"
-
-    copy_mirror_lambda_artifact
+if needs_docker_mirror; then
+    prepare_docker_mirror
 fi
+
+echo ""
+echo "=== Building Lambda zip (Docker: schema-infra-lambda-builder) ==="
+stage_started="$(schema_telemetry_stage_start build)"
+BUILDER_IMAGE="$(bash "$SCRIPT_DIR/scripts/ensure-builder-image.sh")"
+docker run --rm \
+    --platform linux/amd64 \
+    -v "$DOCKER_SCRIPT_DIR":/build/schema-infra \
+    -w /build/schema-infra/fold \
+    -e CARGO_HOME=/build/schema-infra/.docker-cache/cargo \
+    -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
+    -e BUILD_PROFILE="$PROFILE" \
+    -e GH_PAT="${GH_PAT:-}" \
+    "$BUILDER_IMAGE" \
+    bash /build/schema-infra/scripts/lambda-container-build.sh
+schema_telemetry_stage_end build "$stage_started"
+
+copy_mirror_lambda_artifact
 
 # =============================================================
 # 3. Extract bootstrap.zip for CDK Code.fromAsset(...)

@@ -154,7 +154,6 @@ jobs:
           DEPLOY_ENV: prod
         run: bash scripts/deploy/restore-last-oid.sh
       - name: Deploy dev and smoke dev
-        id: dev_pipeline
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           LASTGIT_CI_OID: ${{ env.DEPLOY_SHA }}
@@ -162,13 +161,9 @@ jobs:
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
           SCHEMA_DEPLOY_BASE_FILE: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && format('{0}/prod-base/last-deployed-oid', runner.temp) || '' }}
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
-          SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
           SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh
-      - name: DEV smoke passed ${{ env.DEPLOY_SHA }}
-        if: steps.dev_pipeline.outputs.dev_smoke_revision == env.DEPLOY_SHA
-        run: echo 'Actual DEV smoke passed for the selected source revision.' >> "$GITHUB_STEP_SUMMARY"
       - name: Save dev last-deployed-oid
         if: always()
         uses: actions/upload-artifact@v4
@@ -255,12 +250,10 @@ jobs:
           SCHEMA_DEPLOY_SKIP_DEV: "1"
           CANARY_WEIGHT: "0.05"
           CANARY_SOAK_HOURS: "24"
-          CANARY_STATE_FROM_ALIAS: "1"
           CANARY_RUN_ROOT_REFRESHED: "1"
           CANARY_SKIP_FETCH: "1"
           LASTGIT_DEPLOY_LOG_DIR: ${{ runner.temp }}/deploy-state
           SCHEMA_ARTIFACT_STORE: ${{ runner.temp }}/artifacts
-          SCHEMA_BUILD_REMOTE_HOST: ""
           LASTGIT_DEPLOY_SKIP_SUBMODULE: "1"
           SCHEMA_DEPLOY_FORCE_KIND: ${{ inputs.force_kind }}
         run: bash .lastgit/deploy-pipeline.sh

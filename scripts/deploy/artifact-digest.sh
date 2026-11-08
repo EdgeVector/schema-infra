@@ -15,10 +15,9 @@ schema_infra_sha256_file() {
 # $1 = repo root, $2 = fold pin oid, $3 = profile
 schema_infra_artifact_input_text() {
     local root="${1:?}" fold_pin="${2:?}" profile="${3:?}"
-    printf 'fold=%s\nrecipe=%s\ndriver=%s\nlib=%s\nbuilder=%s\nprofile=%s\n' \
+    printf 'fold=%s\nrecipe=%s\nlib=%s\nbuilder=%s\nprofile=%s\n' \
         "$fold_pin" \
         "$(schema_infra_sha256_file "$root/scripts/lambda-container-build.sh")" \
-        "$(schema_infra_sha256_file "$root/scripts/remote-native-build.sh")" \
         "$(schema_infra_sha256_file "$root/scripts/lambda-container-build-lib.sh")" \
         "$(schema_infra_sha256_file "$root/scripts/ensure-builder-image.sh")" \
         "$profile"
