@@ -590,7 +590,7 @@ exports.handler = async (event) => {
         integrationId: "SchemaGetIntegrationV1",
       },
       {
-        // Singular /schema/{schemaId} used by FoldDB client
+        // Singular /schema/{schemaId} used by the LastDB schema client, Brain and lastdb-nano
         path: "/v1/schema/{schemaId}",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "SchemaGetSingularIntegrationV1",
@@ -614,7 +614,7 @@ exports.handler = async (event) => {
       },
       {
         // Stateless dedupe for Mini cache misses. Fresh LastDB nodes call this
-        // through /api/apps/declare-schema during first fkanban/fbrain init.
+        // through /api/apps/declare-schema during the first kanban or brain init.
         path: "/v1/schemas/resolve",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "SchemaResolveIntegrationV1",
@@ -626,11 +626,10 @@ exports.handler = async (event) => {
       },
       {
         // Admin one-shot: backfill embeddings for every schema and
-        // canonical field that doesn't yet have a persisted embedding
-        // in the `schema-embeddings-${env}` DynamoDB table. Idempotent
-        // — subsequent calls skip already-persisted entries and return
-        // counts of computed + skipped per kind. Hit once after first
-        // deploying the DDB-backed embedding store (schema_service #46).
+        // canonical field that does not yet have a persisted embedding
+        // in the table named by SCHEMA_EMBEDDINGS_TABLE. Idempotent:
+        // later calls skip persisted entries and return counts of
+        // computed and skipped per kind.
         path: "/v1/admin/warm-embeddings",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "AdminWarmEmbeddingsIntegrationV1",
@@ -719,11 +718,6 @@ exports.handler = async (event) => {
     // channels/revocations). Without these gateway mounts, clients see
     // APIGW `{"message":"Not Found"}` even though the Lambda handler
     // exists.
-    //
-    // The /v2 handlers only exist in fold pins >= 288a960b (LastDB #465).
-    // The current pin (5a7efbdd, fold #608) includes them. DEV can now
-    // accept the newer fold (canonical-v1 namespace, PR #477) without
-    // rejecting the legacy schemas.json that blocked PR #475.
     // =====================================================
     const v2Routes: Array<{
       path: string;
@@ -781,54 +775,12 @@ exports.handler = async (event) => {
     // Schema embeddings — DynamoDB table.
     // =====================================================
 
-    // Embeddings table. Single table, two kinds share via partition key:
+    // Embeddings table. One table, two kinds share the key:
     //   PK `kind` (S) = "descriptive_name" | "canonical_field"
-    //   SK `key`  (S) = schema identity_hash | canonical field name
+    //   SK `key`  (S) = schema identity hash | canonical field name
     //
-    // Write path (add_schema / add_canonical_field) PutItems one row
-    // per new embedding. Cold start Queries per kind, paginated 1MB
-    // pages. O(1) writes vs. the single-blob S3 approach that RMW'd
-    // the whole blob on every update — see schema_service #46.
-    //
-    // PAY_PER_REQUEST: at current volume (dozens of writes per day,
-    // one cold-start Query pair per Lambda cold start) on-demand
-    // billing is a few cents per month, simpler than capacity
-    // planning. Revisit if per-minute traffic ever exceeds
-    // ~10 writes/sec sustained.
-    const embeddingsTable = new dynamodb.Table(this, "SchemaEmbeddingsTable", {
-      tableName: `schema-embeddings-${envName}`,
-      partitionKey: {
-        name: "kind",
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: "key",
-        type: dynamodb.AttributeType.STRING,
-      },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      // Dev is DESTROY so a stack teardown doesn't leave orphan tables.
-      // Prod is RETAIN — embeddings are cheap to recompute but mostly
-      // free to keep around, and accidental destroy would force every
-      // cold start to re-embed until the warm-embeddings backfill
-      // re-ran.
-      removalPolicy: environment.isProd
-        ? RemovalPolicy.RETAIN
-        : RemovalPolicy.DESTROY,
-    });
-
-    // Request-path Lambda reads + writes the embeddings table:
-    // PutItem on every `add_schema` / `add_canonical_field`, Query
-    // on cold start to populate the in-memory cache.
-    embeddingsTable.grantReadWriteData(schemaServiceFn);
-    const canonicalEmbeddingsTable = new dynamodb.Table(this, "CanonicalVocabularyEmbeddingsTable", {
-      tableName: `schema-embeddings-${envName}-canonical-v1`,
-      partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
-      sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
-    // Keep the old table and role grant while retained Lambda versions use v1.
-    canonicalEmbeddingsTable.grantReadWriteData(schemaServiceFn);
+    // PAY_PER_REQUEST. Request-path reads and writes use this table.
+    // The construct ID is the live CloudFormation logical ID.
     const atomicEmbeddingsTable = new dynamodb.Table(this, "AtomicVocabularyEmbeddingsTable", {
       tableName: `schema-embeddings-${envName}-${definitionNamespace}`,
       partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },

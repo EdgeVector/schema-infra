@@ -4,7 +4,7 @@ canonical_vocabulary_phase() {
     local root phase
     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     phase="$(cat "$root/canonical-vocabulary/phase")"
-    case "$phase" in dev|prod-reset|prod) printf '%s\n' "$phase" ;;
+    case "$phase" in dev|prod) printf '%s\n' "$phase" ;;
         *) echo "FAIL: unknown canonical vocabulary rollout phase" >&2; return 1 ;;
     esac
 }

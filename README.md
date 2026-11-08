@@ -40,23 +40,18 @@ secret-free manifest; pending main events coalesce to the newest eligible
 tip before any expensive work. Evidence for the North Star terminal proof
 is collected by `scripts/proof/schema-lambda-fast-deployment/collect.py`.
 
-### Build host (PC default retired 2026-09-29)
+### Build host
 
-The Lambda zip builds in local Docker with `--platform linux/amd64`. On Apple
-Silicon this runs under QEMU. The artifact has the correct x86_64
-architecture, but QEMU builds are slow and can wedge mid-compile. The default
-build no longer uses the gaming PC (`SCHEMA_BUILD_REMOTE_HOST=pc` is retired).
-
-- Production deploys must go through CI or another native x86_64 host.
-- Opt in to a remote native builder with `SCHEMA_BUILD_REMOTE_HOST=<ssh-alias>`
-  (see `scripts/remote-native-build.sh`). Do not point it at the PC.
-- An empty or unset `SCHEMA_BUILD_REMOTE_HOST` selects the local Docker path.
+`build.sh` runs the Lambda build in an Amazon Linux 2023 container in Docker
+(`--platform linux/amd64`). CI builds natively on the hosted x86_64 runner.
+A local Apple Silicon build runs under QEMU and can wedge. Production deploys
+go through `deploy.yml`.
 
 ## Architecture
 
 The schema service runs as a single Lambda function with two storage layers:
 
-1. **S3 persistence** — `canonical-v2/definitions.json` stores schemas, canonical fields and owned declarations together. One conditional write commits each schema or declaration with its new field definitions. Process cache updates follow that commit. The service refuses an implicit conversion of a nonempty legacy store. The `canonical-v1/` generation and its embedding store remain available for recovery. App identities and quotas keep their existing stores.
+1. **S3 persistence** — `canonical-v2/definitions.json` stores schemas, canonical fields and owned declarations together. One conditional write commits each schema or declaration with its new field definitions. Process cache updates follow that commit. The service refuses an implicit conversion of a nonempty legacy store. App identities and quotas keep their existing stores.
 2. **fastembed Lambda Layer** — a pre-built layer bundles the fastembed model binary so the Lambda doesn't download it on every cold start. Cold start stays under 2s even with the embedding model loaded.
 
 Lambda configuration:

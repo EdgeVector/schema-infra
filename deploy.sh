@@ -12,30 +12,19 @@ source "$SCRIPT_DIR/scripts/deploy/canonical-vocabulary-phase.sh"
 SKIP_INFRA=false
 SKIP_BUILD=false
 YES_FLAG=false
-CANDIDATE_ONLY=false
 shift 2>/dev/null || true
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --skip-infra) SKIP_INFRA=true ;;
         --skip-build) SKIP_BUILD=true ;;
         --yes) YES_FLAG=true ;;
-        --candidate-only) CANDIDATE_ONLY=true ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
 done
 
 case "$ENVIRONMENT" in dev|prod) ;; *) echo "Invalid environment" >&2; exit 1 ;; esac
-if [ "$CANDIDATE_ONLY" = true ]; then
-    # This path only publishes CDK's separate candidate. The public alias
-    # remains on the observed version, even while phase=dev holds traffic.
-    [ "$ENVIRONMENT" = prod ] && [ "$SKIP_INFRA" = false ] && [ "$SKIP_BUILD" = true ] || {
-        echo "FAIL: candidate preparation requires prod --skip-build and CDK" >&2; exit 1;
-    }
-    canonical_vocabulary_phase >/dev/null
-else
-    canonical_vocabulary_require_environment "$ENVIRONMENT"
-fi
+canonical_vocabulary_require_environment "$ENVIRONMENT"
 
 # Determine region based on environment
 if [ "$ENVIRONMENT" = "prod" ]; then

@@ -6,7 +6,6 @@ set -euo pipefail
 CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
 CANARY_WEIGHT="${CANARY_WEIGHT:-0.05}"  # 5% of live prod traffic on the new version
 STATE_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-schema-infra}"
-STATE_FILE="${STATE_DIR}/canary-state.json"
 CANARY_ALIAS_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-alias-state.py"
 CANARY_STORE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-definition-store.py"
 source "$(dirname "${BASH_SOURCE[0]}")/canonical-vocabulary-phase.sh"
@@ -181,48 +180,6 @@ rollback_canary() {
     "${revision_args[@]}" --region "$region" >/dev/null
 }
 
-# Write canary state JSON (python for portable JSON).
-write_canary_state() {
-  local oid="$1" old_ver="$2" new_ver="$3" fn="$4" region="$5" started="$6" promote_after="$7"
-  python3 - "$STATE_FILE" "$oid" "$old_ver" "$new_ver" "$fn" "$region" "$started" "$promote_after" <<'PY'
-import json, sys
-path, oid, old, new, fn, region, started, promote = sys.argv[1:]
-state = {
-  "repo": "schema-infra",
-  "oid": oid,
-  "stage": "canary_soak",
-  "old_version": old,
-  "new_version": new,
-  "function_name": fn,
-  "region": region,
-  "canary_started_at": started,
-  "promote_after": promote,
-  "weight": float(__import__("os").environ.get("CANARY_WEIGHT", "0.05")),
-}
-with open(path, "w") as f:
-  json.dump(state, f, indent=2)
-  f.write("\n")
-print(path)
-PY
-}
-
-clear_canary_state() {
-  rm -f "$STATE_FILE"
-}
-
-# True if promote_after is in the past (UTC).
-canary_soak_elapsed() {
-  local promote_after="$1"
-  python3 - "$promote_after" <<'PY'
-import sys
-from datetime import datetime, timezone
-pa = sys.argv[1].replace("Z", "+00:00")
-t = datetime.fromisoformat(pa)
-now = datetime.now(timezone.utc)
-sys.exit(0 if now >= t else 1)
-PY
-}
-
 canary_default_alarm_names() {
   if [ -z "${SCHEMA_CANARY_ALARM_NAMES:-}" ]; then
     printf '%s\n' "schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod"
@@ -328,14 +285,6 @@ canary_alarms_inspect() {
   printf '%s\t%s\n' "$status" "$firing"
 }
 
-# Check CloudWatch alarms for the schema function (any ALARM or missing → fail).
-canary_alarms_ok() {
-  local region="$1" out status
-  out="$(canary_alarms_inspect "$region")"
-  status="${out%%	*}"
-  [ "$status" = "ok" ]
-}
-
 # Read the real alias shape. The clock is version-bound proof in Description;
 # get-alias has no LastModified. Missing proof retains the pair for rollback.
 # stdout: ACTION<TAB>old<TAB>new<TAB>revision<TAB>promote_after.
@@ -350,7 +299,6 @@ canary_alias_plan() {
 # GitHub ticker path. The live alias is the soak record: primary is the
 # previous version, AdditionalVersionWeights at CANARY_WEIGHT is the new
 # version, and Description stores the pair and the UTC start time.
-# A runner-local canary-state.json does not survive the job.
 #
 # Abort order: describe both alarms first; a missing name fails before any
 # alias mutation; empty weights exit 0; any other weight map fails; a

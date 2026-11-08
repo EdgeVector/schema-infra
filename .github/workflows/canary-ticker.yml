@@ -3,7 +3,7 @@ name: canary-ticker
 # Promote or roll back the schema-infra prod canary, then catch PROD up.
 #
 # The deploy workflow pins 5% of live traffic on the new Lambda version.
-# This workflow is the old 15-minute launchd ticker. It reads the live alias.
+# This workflow reads the live alias.
 # Description stores the version pair and UTC start time. After 24 hours, alarms OK
 # move the alias to 100% on the new version. ALARM at any tick rolls the
 # alias back to the previous version, then opens one GitHub issue labeled
@@ -59,9 +59,6 @@ jobs:
         env:
           CANARY_WEIGHT: "0.05"
           CANARY_SOAK_HOURS: "24"
-          CANARY_STATE_FROM_ALIAS: "1"
-          CANARY_RUN_ROOT_REFRESHED: "1"
-          CANARY_SKIP_FETCH: "1"
           SCHEMA_CANARY_OPEN_ISSUE: "1"
           SCHEMA_CANARY_ISSUE_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}

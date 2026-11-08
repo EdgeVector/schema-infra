@@ -66,13 +66,8 @@ If lastdb main does not contain the pin, `auto-deploy-on-fold.yml` fails. A pers
   opens one GitHub issue labeled `schema-canary-rollback`. Then it runs the PROD
   catch-up. The runner never calls `kanban`. A host-local routine files the card.
   Do not add an `environment:` key.
-- `prepare-prod.yml`: manual accepted-main preparation for the approved definition retirement.
-  It requires current main CI and CodeQL, deploys the reviewed qualified-read IAM permission,
-  builds the core in CI, and checks a separate numbered PROD candidate.
-  It preserves the public version and does not open the PROD phase or start a canary.
-  The next reviewed source change controls the atomic store reset and the ordinary release.
 
-The old LastGit deploy watcher is not running. `.lastgit/deploy-pipeline.sh`
+`.lastgit/deploy-pipeline.sh`
 is the staged pipeline that `deploy.yml` calls. `canary-ticker.yml` runs
-`.lastgit/canary-ticker.sh` with `CANARY_STATE_FROM_ALIAS=1`. The live alias
+`.lastgit/canary-ticker.sh`. The live alias
 is the soak record.

@@ -1,4 +1,0 @@
-# LastGit node for this repo (primary Mini).
-# export LASTGIT_SOCKET=$HOME/.lastdb/data/folddb.sock
-# git config lastgit.socket $HOME/.lastdb/data/folddb.sock
-$HOME/.lastdb/data/folddb.sock
