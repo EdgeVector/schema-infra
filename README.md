@@ -1,6 +1,6 @@
 # Schema Infrastructure
 
-Standalone infrastructure for the FoldDB Schema Service (`schema.folddb.com`).
+Standalone infrastructure for the LastDB Schema Service (`schema.folddb.com`).
 
 ## Repository Venue
 
@@ -13,12 +13,11 @@ deploys DEV, smokes DEV, and follows the PROD canary rules. See
 
 ## Overview
 
-This project contains everything needed to deploy the global schema registry for FoldDB:
+This project contains everything needed to deploy the global schema registry for LastDB:
 
 - **Lambda Function**: Rust-based schema service with fastembed semantic search
 - **S3 Bucket**: One conditional definition image for schemas and canonical fields
 - **API Gateway**: HTTP API with CORS and custom domain support
-- **Frontend**: Web UI for browsing schemas
 
 ## Release planes
 
@@ -66,7 +65,7 @@ Lambda configuration:
 
 ## Builtin Canonical Fields
 
-On cold start the Lambda calls `seed_canonical_fields()` to pre-populate ~150 curated canonical fields (e.g., `user_email`, `photo_caption`, `gps_latitude`, `document_title`). Each field has a hardcoded description, data classification, and interest category. These are the shared vocabulary that enables schema deduplication and similarity across different FoldDB nodes.
+On cold start the Lambda calls `schema_service_core::builtin_canonical_fields::seed` to pre-populate ~150 curated canonical fields (e.g., `user_email`, `photo_caption`, `gps_latitude`, `document_title`). Each field has a hardcoded description, data classification, and interest category. These are the shared vocabulary that enables schema deduplication and similarity across different LastDB nodes.
 
 Canonical fields are used by:
 - Schema similarity detection (same semantic field → high similarity score)
@@ -82,12 +81,11 @@ schema-infra/
 │   ├── lib/               # Stack definitions
 │   └── package.json       # CDK dependencies
 ├── fold/                  # Lambda handler source (submodule → EdgeVector/lastdb monorepo)
-├── frontend/              # Schema registry web UI
 ├── build.sh              # Build Lambda zip + fastembed Layer
 └── deploy.sh             # Deploy infrastructure
 ```
 
-Lambda handler source lives in the [`EdgeVector/lastdb`](https://github.com/EdgeVector/lastdb) monorepo (which contains `fold_db`, `schema_service`, and `fold_db_node` in one cargo workspace), vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` from the monorepo workspace root and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
+Lambda handler source lives in the [`EdgeVector/lastdb`](https://github.com/EdgeVector/lastdb) monorepo (which contains `schema_service` and `lastdb_node` in one cargo workspace), vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda` from the monorepo workspace root and emits the deployable zip plus a fastembed Layer asset at `target/fastembed_layer/`.
 
 ## Quick Start
 
@@ -159,21 +157,10 @@ To enable the `schema.folddb.com` custom domain:
 3. Deploy with `./deploy.sh prod`
 4. Add a CNAME record pointing `schema.folddb.com` to the API Gateway domain
 
-## Frontend
-
-The frontend is a static site in `frontend/`. To serve locally:
-
-```bash
-cd frontend
-python3 -m http.server 8080
-```
-
-Deploy to Vercel or another static hosting service.
-
 ## API Endpoints
 
-The Lambda serves the full `/v1/*` surface — 19 endpoints covering
-schemas, views, transforms, and system. See the machine-readable spec
+The Lambda serves `/health` and the `/v1/*` surface for schemas, fields, apps,
+snapshots, and admin routes. See the machine-readable spec
 at [`fold/schema_service/openapi.yaml`](https://github.com/EdgeVector/lastdb/blob/main/schema_service/openapi.yaml).
 
 A few representative routes:
@@ -187,8 +174,6 @@ A few representative routes:
 | POST   | `/v1/schemas`                | Register / propose a schema              |
 | POST   | `/v1/schemas/batch-check-reuse` | Batch reuse-check for proposed schemas |
 | GET    | `/v1/snapshot/shared-only`   | Export shared-only snapshot for resolver packs |
-| GET    | `/v1/views`                  | List view names                          |
-| GET    | `/v1/transforms`             | List transform records                   |
 
 ## Environment Variables
 
@@ -202,13 +187,9 @@ A few representative routes:
 
 ## Storage Backend
 
-Schemas are stored in S3 as individual JSON blobs:
+The Lambda stores definitions in S3 through `schema_service_s3::S3BlobPersistence`, which implements `ExternalSchemaPersistence`. The live definition object is `canonical-v2/definitions.json`: schemas, canonical fields, and owned declarations in one conditional write. App identities and quotas keep their existing stores.
 
-```
-s3://<SCHEMAS_BUCKET>/schemas/<schema_name>.json
-```
-
-The `ExternalSchemaPersistence` trait allows plugging in alternative backends. The Lambda uses `S3SchemaPersistence`; the dev binary in [`fold/schema_service/crates/server_http/`](https://github.com/EdgeVector/fold/tree/main/schema_service/crates/server_http) uses `SledSchemaPersistence` (default port 9102, for local development).
+The local HTTP binary is [`schema_service/crates/server_http`](https://github.com/EdgeVector/lastdb/tree/main/schema_service/crates/server_http) in `EdgeVector/lastdb`.
 
 ## fastembed Lambda Layer
 
