@@ -46,7 +46,7 @@ Its schemas, fields, declarations, near misses, releases, channels, and compatib
 App identities, credentials, permissions, and quotas keep their common stores.
 The new generation uses a separate retained embedding table.
 The previous Lambda version retains its definition and embedding access during the canary.
-The rollout does not change the primary home, archive, atom, file, or daemon.
+The rollout does not change the primary home, archive, record, file, or daemon.
 
 Recovery definitions and exact legacy inventories stay outside Git.
 No legacy name receives an exception because an old schema used it.
