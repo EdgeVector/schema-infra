@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke checks for schema-infra after deploy.
-# Exit 0 only if critical surfaces respond as expected on the NEW stack.
+# Exit 0 only if critical advisory surfaces respond as expected on the stack.
 set -euo pipefail
 
 ENVIRONMENT="${1:-${SCHEMA_SMOKE_ENV:-dev}}"
@@ -57,21 +57,15 @@ check() {
   echo "OK   $path HTTP $code"
 }
 
-# Healthy core surfaces
+# Healthy advisory surfaces
 check "/v1/health" "200" "healthy"
 check "/health" "200" "healthy"
-check "/v1/schemas" "200" "schemas"
-
-# DEV serves the candidate at full weight. A malformed ID exercises gateway
-# routing and Lambda admission without creating a version in the registry.
-if [ "$ENVIRONMENT" = "dev" ]; then
-  check "/v1/schema-versions/invalid" "400" "invalid portable schema ID"
-  check "/v1/schema-versions/invalid" "400" "invalid portable schema ID" \
-    -X PUT -H 'Content-Type: application/json' -d '{"catalog_id":"invalid"}'
-fi
+check "/v1/fields/vocabulary" "200" "fields"
+check "/v1/advice/schema" "200" "findings" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"schema":{"name":"Note","fields":["note_title"],"field_types":{"note_title":"String"}}}'
 
 # Dead planes must NOT be served by Lambda as success (APIGW or Lambda 404 both OK)
-# After canary CDK: APIGW 404 for unmounted routes. Before: Lambda may return JSON 404.
 for path in /v1/views /v1/transforms /api/schemas; do
   code=$(curl -sS -m 20 -o /dev/null -w "%{http_code}" "${API_URL}${path}" || echo 000)
   case "$code" in
@@ -79,19 +73,6 @@ for path in /v1/views /v1/transforms /api/schemas; do
     *) echo "FAIL $path: HTTP $code (dead surface should 404)"; fail=1 ;;
   esac
 done
-
-# Shared-only must be mounted (auth may 401/403 without key — not APIGW 404)
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-shared-only.out" -w "%{http_code}" \
-  "${API_URL}/v1/snapshot/shared-only" || echo 000)
-case "$code" in
-  200|401|403) echo "OK   /v1/snapshot/shared-only HTTP $code (mounted)" ;;
-  404)
-    # Allow brief lag if stage not updated yet; still fail hard for smoke
-    echo "FAIL /v1/snapshot/shared-only HTTP 404 (route missing on gateway)"
-    fail=1
-    ;;
-  *) echo "FAIL /v1/snapshot/shared-only HTTP $code"; fail=1 ;;
-esac
 
 if [ "$ENVIRONMENT" = "prod" ]; then
   DOMAIN=$(aws cloudformation describe-stacks \
@@ -109,175 +90,30 @@ if [ "$ENVIRONMENT" = "prod" ]; then
      [ -n "$DOMAIN_TARGET" ] && [ "$DOMAIN_TARGET" != "None" ]; then
     code=$(curl -sS -m 20 \
       --connect-to "${DOMAIN}:443:${DOMAIN_TARGET}:443" \
-      -o "$EVIDENCE_DIR/schema-shared-only-domain.out" \
+      -o "$EVIDENCE_DIR/schema-vocabulary-domain.out" \
       -w "%{http_code}" \
-      "https://${DOMAIN}/v1/snapshot/shared-only" || echo 000)
+      "https://${DOMAIN}/v1/fields/vocabulary" || echo 000)
+    body=$(cat "$EVIDENCE_DIR/schema-vocabulary-domain.out" 2>/dev/null || true)
     case "$code" in
-      200|401|403) echo "OK   ${DOMAIN}/v1/snapshot/shared-only HTTP $code (mounted)" ;;
+      200)
+        if echo "$body" | grep -q "fields"; then
+          echo "OK   ${DOMAIN}/v1/fields/vocabulary HTTP 200 (mounted)"
+        else
+          echo "FAIL ${DOMAIN}/v1/fields/vocabulary missing 'fields' in body"
+          fail=1
+        fi
+        ;;
       404)
-        echo "FAIL ${DOMAIN}/v1/snapshot/shared-only HTTP 404 (custom-domain route missing)"
+        echo "FAIL ${DOMAIN}/v1/fields/vocabulary HTTP 404 (custom-domain route missing)"
         fail=1
         ;;
-      *) echo "FAIL ${DOMAIN}/v1/snapshot/shared-only HTTP $code"; fail=1 ;;
+      *) echo "FAIL ${DOMAIN}/v1/fields/vocabulary HTTP $code"; fail=1 ;;
     esac
   else
     echo "FAIL: missing prod custom-domain outputs for $STACK"
     fail=1
   fi
 fi
-
-# Schema resolve must be mounted. This is a public read/dedupe route used by
-# fresh Mini nodes during first app-schema declaration; APIGW 404 breaks init.
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-resolve.out" -w "%{http_code}" \
-  -X POST "${API_URL}/v1/schemas/resolve" \
-  -H 'Content-Type: application/json' \
-  -d '{"client_registry_version":null,"proposals":[]}' || echo 000)
-case "$code" in
-  200|400) echo "OK   /v1/schemas/resolve HTTP $code (mounted)" ;;
-  404)
-    echo "FAIL /v1/schemas/resolve HTTP 404 (route missing on gateway)"
-    fail=1
-    ;;
-  *) echo "FAIL /v1/schemas/resolve HTTP $code"; fail=1 ;;
-esac
-
-# PoW clients must be able to obtain the stateless mutation challenge. An
-# empty payload is intentionally invalid, but must reach Lambda (400), not the
-# API Gateway missing-route response (404).
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-mutation-challenge.out" -w "%{http_code}" \
-  -X POST "${API_URL}/v1/schemas/mutation-challenge" \
-  -H 'Content-Type: application/json' -d '{}' || echo 000)
-case "$code" in
-  400) echo "OK   /v1/schemas/mutation-challenge HTTP 400 (mounted)" ;;
-  404)
-    echo "FAIL /v1/schemas/mutation-challenge HTTP 404 (route missing on gateway)"
-    fail=1
-    ;;
-  *) echo "FAIL /v1/schemas/mutation-challenge HTTP $code"; fail=1 ;;
-esac
-
-# Public app shelf (lastdb app list). Lambda returns the promoted, non-revoked
-# array. APIGW `{"message":"Not Found"}` means GET was never mounted on /v1/apps
-# (POST-only was the long-standing bug after fold #682).
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-apps-list.out" -w "%{http_code}" \
-  "${API_URL}/v1/apps" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-apps-list.out" 2>/dev/null || true)
-case "$code" in
-  200)
-    if echo "$body" | grep -q '\['; then
-      echo "OK   /v1/apps HTTP 200 (public shelf mounted)"
-    else
-      echo "FAIL /v1/apps: HTTP 200 but body is not a JSON array: $(echo "$body" | cut -c1-120)"
-      fail=1
-    fi
-    ;;
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL /v1/apps HTTP 404 APIGW missing-route (mount GET on /v1/apps)"
-    else
-      echo "FAIL /v1/apps HTTP 404 body=$(echo "$body" | cut -c1-120)"
-    fi
-    fail=1
-    ;;
-  *) echo "FAIL /v1/apps HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
-# PUT /v1/apps/{app_id} must reach Lambda (cert-gated), not APIGW 404.
-# Empty body without cert → Lambda 401/400; never gateway {"message":"Not Found"}.
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-apps-put.out" -w "%{http_code}" \
-  -X PUT "${API_URL}/v1/apps/__smoke_missing_app__" \
-  -H 'Content-Type: application/json' -d '{}' || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-apps-put.out" 2>/dev/null || true)
-case "$code" in
-  400|401|404)
-    if [ "$code" = "404" ] && echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL PUT /v1/apps/{app_id} HTTP 404 APIGW missing-route (mount PUT)"
-      fail=1
-    else
-      echo "OK   PUT /v1/apps/{app_id} HTTP $code (mounted; Lambda auth/validation)"
-    fi
-    ;;
-  *)
-    echo "FAIL PUT /v1/apps/{app_id} HTTP $code body=$(echo "$body" | cut -c1-120)"
-    fail=1
-    ;;
-esac
-
-# /v2 registry routes must reach Lambda, not APIGW 404. An empty registry returns [],
-# not gateway {"message":"Not Found"}. Any Lambda 4xx/2xx proves the route is mounted.
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-apps-list.out" -w "%{http_code}" \
-  "${API_URL}/v2/apps" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-apps-list.out" 2>/dev/null || true)
-case "$code" in
-  200)
-    if echo "$body" | grep -q '\['; then
-      echo "OK   /v2/apps HTTP 200 (v2 registry mounted)"
-    else
-      echo "FAIL /v2/apps: HTTP 200 but body is not a JSON array: $(echo "$body" | cut -c1-120)"
-      fail=1
-    fi
-    ;;
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL /v2/apps HTTP 404 APIGW missing-route (mount GET /v2/apps)"
-    else
-      echo "FAIL /v2/apps HTTP 404 body=$(echo "$body" | cut -c1-120)"
-    fi
-    fail=1
-    ;;
-  *) echo "FAIL /v2/apps HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
-# /v2/apps/{app_id} — unknown ID returns Lambda 404, not APIGW 404 missing-route
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-app-get.out" -w "%{http_code}" \
-  "${API_URL}/v2/apps/__smoke_missing_app__" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-app-get.out" 2>/dev/null || true)
-case "$code" in
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL GET /v2/apps/{app_id} HTTP 404 APIGW missing-route"
-      fail=1
-    else
-      echo "OK   GET /v2/apps/{app_id} HTTP 404 (mounted; Lambda not-found)"
-    fi
-    ;;
-  200|400|401) echo "OK   GET /v2/apps/{app_id} HTTP $code (mounted)"; ;;
-  *) echo "FAIL GET /v2/apps/{app_id} HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
-# /v2/apps/{app_id}/releases — unknown app returns Lambda 404, not APIGW 404
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-app-releases.out" -w "%{http_code}" \
-  "${API_URL}/v2/apps/__smoke_missing_app__/releases" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-app-releases.out" 2>/dev/null || true)
-case "$code" in
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL GET /v2/apps/{app_id}/releases HTTP 404 APIGW missing-route"
-      fail=1
-    else
-      echo "OK   GET /v2/apps/{app_id}/releases HTTP 404 (mounted; Lambda not-found)"
-    fi
-    ;;
-  200|400|401) echo "OK   GET /v2/apps/{app_id}/releases HTTP $code (mounted)"; ;;
-  *) echo "FAIL GET /v2/apps/{app_id}/releases HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
-
-# /v2/releases/{release_id} — unknown release returns Lambda 404, not APIGW 404
-code=$(curl -sS -m 20 -o "$EVIDENCE_DIR/schema-v2-release-get.out" -w "%{http_code}" \
-  "${API_URL}/v2/releases/__smoke_missing_release__" || echo 000)
-body=$(cat "$EVIDENCE_DIR/schema-v2-release-get.out" 2>/dev/null || true)
-case "$code" in
-  404)
-    if echo "$body" | grep -q '"message"[[:space:]]*:[[:space:]]*"Not Found"'; then
-      echo "FAIL GET /v2/releases/{release_id} HTTP 404 APIGW missing-route"
-      fail=1
-    else
-      echo "OK   GET /v2/releases/{release_id} HTTP 404 (mounted; Lambda not-found)"
-    fi
-    ;;
-  200|400|401) echo "OK   GET /v2/releases/{release_id} HTTP $code (mounted)"; ;;
-  *) echo "FAIL GET /v2/releases/{release_id} HTTP $code body=$(echo "$body" | cut -c1-120)"; fail=1 ;;
-esac
 
 # Anthropic env must be gone on the live function
 FN=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
