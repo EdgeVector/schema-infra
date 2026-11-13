@@ -154,21 +154,16 @@ To enable the `schema.folddb.com` custom domain:
 
 ## API Endpoints
 
-The Lambda serves `/health` and the `/v1/*` surface for schemas, fields, apps,
-snapshots, and admin routes. See the machine-readable spec
-at [`fold/schema_service/openapi.yaml`](https://github.com/EdgeVector/lastdb/blob/main/schema_service/openapi.yaml).
+The Lambda serves the read-only advisory surface (`/` and `/health` plus `/v1/*`
+health, canonical vocabulary, and schema advice):
 
-A few representative routes:
-
-| Method | Path                         | Description                              |
-| ------ | ---------------------------- | ---------------------------------------- |
-| GET    | `/v1/health`                 | Health check                             |
-| GET    | `/v1/schemas`                | List schema names                        |
-| GET    | `/v1/schemas/available`      | Get all schemas with definitions         |
-| GET    | `/v1/schema/{name}`          | Get a specific schema                    |
-| POST   | `/v1/schemas`                | Register / propose a schema              |
-| POST   | `/v1/schemas/batch-check-reuse` | Batch reuse-check for proposed schemas |
-| GET    | `/v1/snapshot/shared-only`   | Export shared-only snapshot for resolver packs |
+| Method     | Path                    | Description                                                     |
+| ---------- | ----------------------- | --------------------------------------------------------------- |
+| GET / POST | `/`                     | Service metadata and live endpoint index                        |
+| GET        | `/health`               | Health check (unversioned alias)                                |
+| GET        | `/v1/health`            | Health check                                                    |
+| GET        | `/v1/fields/vocabulary` | Read the standard canonical vocabulary                          |
+| POST       | `/v1/advice/schema`     | Advice for one draft schema declaration (read-only, non-blocking) |
 
 ## Environment Variables
 

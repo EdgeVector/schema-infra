@@ -3,8 +3,6 @@ import {
   StackProps,
   Duration,
   CfnOutput,
-  CustomResource,
-  Fn,
   RemovalPolicy,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
@@ -14,12 +12,8 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
-import * as events from "aws-cdk-lib/aws-events";
-import * as eventsTargets from "aws-cdk-lib/aws-events-targets";
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as cr from "aws-cdk-lib/custom-resources";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Environment } from "./environment";
 import { schemaLiveVersion } from "./schema-live-version";
@@ -191,105 +185,6 @@ export class SchemaServiceStack extends Stack {
     });
 
     // =====================================================
-    // App identity v3.1 — trusted root pubkey from exemem-infra
-    //
-    // schema_service verifies DevCert envelopes offline against a set
-    // of trusted exemem root P-256 SubjectPublicKeyInfo DER pubkeys
-    // (see `fold/schema_service/crates/core/src/app_identity.rs`
-    // `parse_trusted_roots`). Without APP_IDENTITY_ROOT_PUBKEYS, the
-    // Lambda rejects every dev cert with 401 and the owner_app_id
-    // gate on POST /v1/schemas silently degrades to a passthrough
-    // (`server_lambda/src/main.rs:446-460`).
-    //
-    // The pubkey lives in KMS in the peer exemem-infra stack at alias
-    // `exemem-app-identity-root-{env}`. KMS does NOT expose the pubkey
-    // bytes via CFN output, so we fetch them at deploy time via a
-    // CloudFormation Custom Resource and inject the base64-encoded
-    // SPKI DER as the Lambda env var.
-    //
-    // Algorithm is ES256 (P-256 / ECDSA_SHA_256), not Ed25519 — AWS
-    // KMS has no `ECC_ED25519` key spec. See
-    // `exemem-infra/.task-blocked.md` and the v3.1 design doc decision
-    // log (2026-05-29 entry).
-    // =====================================================
-    const appIdentityRootKeyArn = Fn.importValue(
-      `ExememAppIdentityRootKeyArn-${envName}`,
-    );
-    // Custom resource that fetches the SPKI pubkey from KMS at deploy
-    // time and stores it as a single base64 string field in the CFN
-    // response. The prior `cr.AwsCustomResource` form tripped the
-    // 4096-byte response limit because AwsCustomResource flattens the
-    // raw KMS response — `PublicKey` arrives as a `Uint8Array`, which
-    // the response flattener walks into per-byte keys
-    // (`PublicKey.0`, `PublicKey.1`, …). `outputPaths: ["PublicKey"]`
-    // is a prefix filter, so it keeps all of those flattened bytes and
-    // does nothing. Replacing with a small Provider-backed Lambda lets
-    // us base64-encode the bytes once and return a single ~150-byte
-    // string field, well under the limit.
-    const appIdentityRootPubkeyHandler = new lambda.Function(
-      this,
-      "AppIdentityRootPubkeyHandler",
-      {
-        runtime: lambda.Runtime.NODEJS_20_X,
-        handler: "index.handler",
-        timeout: Duration.seconds(30),
-        code: lambda.Code.fromInline(
-          `const { KMSClient, GetPublicKeyCommand } = require("@aws-sdk/client-kms");
-exports.handler = async (event) => {
-  const physicalResourceId =
-    event.PhysicalResourceId ||
-    "app-identity-root-pubkey-" + (event.ResourceProperties.Env || "dev");
-  if (event.RequestType === "Delete") {
-    return { PhysicalResourceId: physicalResourceId };
-  }
-  const keyId = event.ResourceProperties.KeyId;
-  const client = new KMSClient({});
-  const resp = await client.send(new GetPublicKeyCommand({ KeyId: keyId }));
-  if (!resp.PublicKey) {
-    throw new Error("KMS GetPublicKey returned no PublicKey for " + keyId);
-  }
-  const publicKeyB64 = Buffer.from(resp.PublicKey).toString("base64");
-  return {
-    PhysicalResourceId: physicalResourceId,
-    Data: { PublicKeyB64: publicKeyB64 },
-  };
-};
-`,
-        ),
-      },
-    );
-    appIdentityRootPubkeyHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ["kms:GetPublicKey"],
-        resources: [appIdentityRootKeyArn],
-      }),
-    );
-    const appIdentityRootPubkeyProvider = new cr.Provider(
-      this,
-      "AppIdentityRootPubkeyProvider",
-      {
-        onEventHandler: appIdentityRootPubkeyHandler,
-      },
-    );
-    const appIdentityRootPubkeyFetcher = new CustomResource(
-      this,
-      "AppIdentityRootPubkeyFetcher",
-      {
-        serviceToken: appIdentityRootPubkeyProvider.serviceToken,
-        properties: {
-          KeyId: appIdentityRootKeyArn,
-          Env: envName,
-        },
-      },
-    );
-    // PublicKeyB64 is the base64-encoded SubjectPublicKeyInfo DER bytes
-    // returned by KMS GetPublicKey. The Lambda decodes it with
-    // `BASE64.decode(entry)` and derives the envelope `key_id` as
-    // `hex(sha256(SPKI DER))`. Resolved at deploy time.
-    const appIdentityRootPubkeyB64 =
-      appIdentityRootPubkeyFetcher.getAttString("PublicKeyB64");
-
-    // =====================================================
     // Schema Service Lambda Function
     // =====================================================
     // Lambda source lives in the `fold` monorepo (submodule at
@@ -355,55 +250,7 @@ exports.handler = async (event) => {
                 schemaStoreR2SecretAccessKeySecret!.secretValue.unsafeUnwrap(),
             }
           : {}),
-        // Dev-only: activate Phase B's dual-signal canonicalization
-        // gate so the `fold-dev-node` dogfood loop stops collapsing
-        // structurally-identical inputs into the wrong canonical.
-        // Prod stays on the single-signal default until Phase E (fold
-        // workspace task `20340`) ships the default flip after Phase C
-        // (`68e3a`) lands + threshold tuning settles. Phase D backfill
-        // populated `purpose_statement` on every existing canonical in
-        // this bucket, so the embedder has a real second signal here.
-        ...(environment.isDev
-          ? { SCHEMA_DUAL_SIGNAL_CANONICALIZATION: "true" }
-          : {}),
-        // Dev-only (Tom, 2026-10-30): accept new schema and field
-        // registrations without an Exemem developer account. Proof of work,
-        // quotas and the vocabulary policy still apply. The Lambda ignores
-        // this flag when ENVIRONMENT is prod, so prod keeps the account gate.
-        ...(environment.isDev ? { SCHEMA_OPEN_REGISTRATION: "true" } : {}),
-        // Run the catalog feed (design-lastdb-advisory-schema-service,
-        // section 8). The schedule below invokes it; without this flag the
-        // Lambda answers the schedule with {"enabled": false} and reads
-        // nothing. Each environment reads its own registry lists. Prod turned
-        // on after the dev feed ran and the dev catalog was rebuilt from it
-        // (2026-11-03).
-        SCHEMA_CATALOG_FEED: "true",
-        // App identity v3.1 (Lanes B2b/B2c). See the Custom Resource
-        // block above for the pubkey fetch + ES256/Ed25519 note.
-        //
-        // ENVIRONMENT binds DevCert envelopes to this deployment:
-        // `prod`/`production` → Env::Prod, anything else → Env::Dev
-        // (per `deployment_env_from_process` in app_identity.rs:234).
-        // Cross-env certs (a `prod`-bound envelope replayed against
-        // `dev`) are rejected at verification.
         ENVIRONMENT: envName,
-        // Trusted exemem root pubkeys (comma-separated base64 SPKI DER)
-        // for offline DevCert verification. With none, /v1/apps 401s
-        // every cert and owner_app_id on /v1/schemas is a passthrough.
-        APP_IDENTITY_ROOT_PUBKEYS: appIdentityRootPubkeyB64,
-        // Cross-env mirror (Lane B2c) — INACTIVE in v1. The mirror
-        // activates only when BOTH of the following are set:
-        //   CROSS_ENV_MIRROR_PEERS — comma-separated env=url pairs,
-        //     e.g. "prod=https://axo709qs11.execute-api.us-east-1.amazonaws.com"
-        //   CROSS_ENV_MIRROR_TOKEN — shared secret across peer envs
-        // Without them the dev env claims an app_id locally, the
-        // scheduled `POST /v1/admin/reconcile-apps` is the only
-        // mechanism that surfaces cross-env divergence, and the
-        // initial publish to each env is manual. When both envs are
-        // live and have a shared SSM/Secrets-Manager token, wire
-        // those here. See `docs/cross_env_mirror_runbook.md`.
-        // CROSS_ENV_MIRROR_PEERS: "prod=https://axo709qs11.execute-api.us-east-1.amazonaws.com",
-        // CROSS_ENV_MIRROR_TOKEN: <SecretValue>.toString(),
       },
     });
 
@@ -419,64 +266,6 @@ exports.handler = async (event) => {
     new CfnOutput(this, "SchemaServiceCandidateVersion", {
       value: schemaServiceFn.currentVersion.version,
       description: "Published candidate; production traffic stays on the preserved live version",
-    });
-
-    // =====================================================
-    // Catalog feed schedule (design-lastdb-advisory-schema-service, section 8)
-    // =====================================================
-    // EventBridge invokes the `live` alias with a synthetic API Gateway v2
-    // event for POST /v1/internal/catalog-feed, so the event goes through the
-    // Lambda's normal dispatcher. The HTTP API below does not route that path,
-    // and the Lambda answers 404 unless requestContext.apiId is the sentinel
-    // below, so only this rule reaches the feed. SCHEMA_CATALOG_FEED (above)
-    // turns the run on. During a prod canary the rule reaches the new version
-    // only at the canary weight; the previous version may not have the route.
-    //
-    // A failed run is not retried: each run reads the stored feed image and
-    // writes it back conditionally, so the next run starts from the last
-    // complete one. maxEventAge keeps a delayed invocation from overlapping
-    // the next scheduled run.
-    const catalogFeedPath = "/v1/internal/catalog-feed";
-    const catalogFeedRouteKey = `POST ${catalogFeedPath}`;
-    const catalogFeedUserAgent = "eventbridge-schema-catalog-feed";
-    new events.Rule(this, "SchemaCatalogFeedSchedule", {
-      description: "Runs the Schema Service catalog feed (registry lists to catalog records)",
-      schedule: events.Schedule.rate(Duration.minutes(5)),
-      enabled: true,
-      targets: [
-        new eventsTargets.LambdaFunction(schemaServiceLive, {
-          retryAttempts: 0,
-          maxEventAge: Duration.minutes(4),
-          event: events.RuleTargetInput.fromObject({
-            version: "2.0",
-            routeKey: catalogFeedRouteKey,
-            rawPath: catalogFeedPath,
-            rawQueryString: "",
-            headers: {
-              "content-type": "application/json",
-              "user-agent": catalogFeedUserAgent,
-            },
-            requestContext: {
-              // Must match SCHEDULE_API_ID in
-              // schema_service/crates/server_lambda/src/catalog_feed.rs.
-              apiId: "catalog-feed-schedule",
-              requestId: events.EventField.eventId,
-              routeKey: catalogFeedRouteKey,
-              stage: "$default",
-              time: events.EventField.time,
-              http: {
-                method: "POST",
-                path: catalogFeedPath,
-                protocol: "HTTP/1.1",
-                sourceIp: "127.0.0.1",
-                userAgent: catalogFeedUserAgent,
-              },
-            },
-            isBase64Encoded: false,
-            body: "",
-          }),
-        }),
-      ],
     });
 
     // Every route points at the `live` alias (not $LATEST), so canary weights
@@ -523,11 +312,6 @@ exports.handler = async (event) => {
         ThrottlingBurstLimit: 20,
         ThrottlingRateLimit: 10,
       },
-      // A new portable schema pin reads the durable catalog definition image.
-      "PUT /v1/schema-versions/{id}": {
-        ThrottlingBurstLimit: 20,
-        ThrottlingRateLimit: 10,
-      },
     };
 
     // Root endpoint
@@ -545,12 +329,13 @@ exports.handler = async (event) => {
     });
 
     // =====================================================
-    // Route definitions — /v1 only.
+    // Route definitions — advisory /v1 surface only.
     //
-    // The Lambda dispatch is /v1-only (explicitly rejects /api/*).
-    // Transform / view / WASM / triggers gateway routes were product-
-    // ripped; do not re-mount them. Keep only live schema/apps/snapshot
-    // surfaces that server_lambda still handles.
+    // Keep only the advisory endpoints actually served by
+    // schema_service/crates/server_lambda/src/dispatch.rs:
+    //   GET  /v1/health
+    //   GET  /v1/fields/vocabulary
+    //   POST /v1/advice/schema
     // =====================================================
     const v1Routes: Array<{
       path: string;
@@ -563,44 +348,6 @@ exports.handler = async (event) => {
         integrationId: "SchemaHealthIntegrationV1",
       },
       {
-        path: "/v1/schemas",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "SchemaListIntegrationV1",
-      },
-      {
-        path: "/v1/schemas/available",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaAvailableIntegrationV1",
-      },
-      {
-        // The real schema_service client obtains its stateless HMAC PoW
-        // challenge here after POST /v1/schemas rejects a novel mutation.
-        path: "/v1/schemas/mutation-challenge",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "SchemaMutationChallengeIntegrationV1",
-      },
-      {
-        path: "/v1/schemas/similar/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaSimilarIntegrationV1",
-      },
-      {
-        path: "/v1/schemas/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaGetIntegrationV1",
-      },
-      {
-        // Singular /schema/{schemaId} used by the LastDB schema client, Brain and lastdb-nano
-        path: "/v1/schema/{schemaId}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SchemaGetSingularIntegrationV1",
-      },
-      {
-        path: "/v1/schema-versions/{id}",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
-        integrationId: "PortableSchemaVersionIntegrationV1",
-      },
-      {
         // Advice for one draft schema declaration. Read-only; it never
         // blocks a declare (design-lastdb-advisory-schema-service).
         path: "/v1/advice/schema",
@@ -608,94 +355,9 @@ exports.handler = async (event) => {
         integrationId: "SchemaAdviceIntegrationV1",
       },
       {
-        path: "/v1/schemas/batch-check-reuse",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "SchemaBatchCheckReuseIntegrationV1",
-      },
-      {
-        // Stateless dedupe for Mini cache misses. Fresh LastDB nodes call this
-        // through /api/apps/declare-schema during the first kanban or brain init.
-        path: "/v1/schemas/resolve",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "SchemaResolveIntegrationV1",
-      },
-      {
-        path: "/v1/schemas/reload",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "SchemaReloadIntegrationV1",
-      },
-      {
-        // Admin one-shot: backfill embeddings for every schema and
-        // canonical field that does not yet have a persisted embedding
-        // in the table named by SCHEMA_EMBEDDINGS_TABLE. Idempotent:
-        // later calls skip persisted entries and return counts of
-        // computed and skipped per kind.
-        path: "/v1/admin/warm-embeddings",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "AdminWarmEmbeddingsIntegrationV1",
-      },
-      {
-        // Auth-gated registry export. Lambda validates `X-API-Key`
-        // against the cross-stack-imported `ApiKeys` DynamoDB table
-        // and returns a `SnapshotEnvelope` on success.
-        path: "/v1/snapshot",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SnapshotExportIntegrationV1",
-      },
-      {
-        // Auth-gated shared-only registry export for resolver packs.
-        path: "/v1/snapshot/shared-only",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "SnapshotSharedOnlyExportIntegrationV1",
-      },
-      // App identity v3.1 — required for owner_app_id publish gate.
-      //
-      // GET /v1/apps is the public promoted-app shelf (`lastdb app list`).
-      // Lambda has implemented it since fold #682 (list_live_apps); without
-      // this method on the gateway, clients see APIGW `{"message":"Not Found"}`
-      // while GET /v1/apps/{id} still works. Same class of bug as #102.
-      // PUT /v1/apps/{app_id} is owner metadata update (cert-gated in Lambda).
-      {
-        path: "/v1/apps",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "AppRegisterIntegrationV1",
-      },
-      {
-        path: "/v1/apps/{app_id}",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
-        integrationId: "AppGetIntegrationV1",
-      },
-      {
-        path: "/v1/apps/{app_id}/promote",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "AppPromoteIntegrationV1",
-      },
-      // Declared fields (brain `design-lastdb-declared-fields`). An app
-      // declares a field, gets a handle, and reuses it across schemas so their
-      // data stays in step.
-      //
-      // Third place a `/v1/*` route must be registered, after the actix table
-      // (`server_http::configure_routes`) and the Lambda's own match router
-      // (`server_lambda/src/main.rs`). Missing here yields APIGW
-      // `{"message":"Not Found"}` even though the Lambda implements the route
-      // — the same class of bug as #102 and as the GET /v1/apps note above.
-      //
-      // The literal `/declare` path and the `{declaration_id}` variable path
-      // coexist: API Gateway prefers the more specific literal segment.
-      {
-        path: "/v1/fields/declare",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "FieldDeclareIntegrationV1",
-      },
-      {
         path: "/v1/fields/vocabulary",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "CanonicalVocabularyIntegrationV1",
-      },
-      {
-        path: "/v1/fields/{declaration_id}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "FieldGetIntegrationV1",
       },
     ];
 
@@ -705,70 +367,10 @@ exports.handler = async (event) => {
         methods: route.methods,
         integration: lambdaIntegration(route.integrationId),
       });
-      // The stage's route settings reference these routes by key.
-      if (route.path === "/v1/advice/schema" || route.path === "/v1/schema-versions/{id}") {
+      // The stage's route settings reference this route by key.
+      if (route.path === "/v1/advice/schema") {
         added.forEach((throttledRoute) => stage.node.addDependency(throttledRoute));
       }
-    }
-
-    // =====================================================
-    // Route definitions — /v2 release registry.
-    //
-    // The Lambda implements v2 release-registry routes (apps/releases/
-    // channels/revocations). Without these gateway mounts, clients see
-    // APIGW `{"message":"Not Found"}` even though the Lambda handler
-    // exists.
-    // =====================================================
-    const v2Routes: Array<{
-      path: string;
-      methods: apigwv2.HttpMethod[];
-      integrationId: string;
-    }> = [
-      {
-        path: "/v2/apps",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "AppListCreateIntegrationV2",
-      },
-      {
-        path: "/v2/apps/{app_id}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "AppGetIntegrationV2",
-      },
-      {
-        path: "/v2/apps/{app_id}/releases",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
-        integrationId: "AppReleasesIntegrationV2",
-      },
-      {
-        path: "/v2/apps/{app_id}/channels/{channel}",
-        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
-        integrationId: "ChannelIntegrationV2",
-      },
-      {
-        path: "/v2/apps/{app_id}/revocations",
-        methods: [apigwv2.HttpMethod.POST],
-        integrationId: "RevocationIntegrationV2",
-      },
-      {
-        path: "/v2/releases/{release_id}",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "ReleaseGetIntegrationV2",
-      },
-      {
-        // 307 to the release verifier's result for this release
-        // (`RELEASE_LOG_URL`/results/<release_id>.json).
-        path: "/v2/releases/{release_id}/verification",
-        methods: [apigwv2.HttpMethod.GET],
-        integrationId: "ReleaseVerificationIntegrationV2",
-      },
-    ];
-
-    for (const route of v2Routes) {
-      httpApi.addRoutes({
-        path: route.path,
-        methods: route.methods,
-        integration: lambdaIntegration(route.integrationId),
-      });
     }
 
     // =====================================================
@@ -854,71 +456,6 @@ exports.handler = async (event) => {
         }
       }
     }
-
-    // =====================================================
-    // Cross-stack auth wire — `GET /v1/snapshot` validates
-    // `X-API-Key` against the exemem `ApiKeys` DynamoDB table.
-    //
-    // The schema_service Lambda reuses
-    // `exemem_common::api_key::validate_api_key` (SHA-256 hash +
-    // DynamoDB GetItem) — same path `storage_service` uses, no
-    // Lambda-to-Lambda invoke. The table is owned by the exemem-infra
-    // stack and exported as `ExememApiKeysTableName-{env}`
-    // (exemem-infra PR #154). This stack imports the name, derives the
-    // ARN, and grants the function `dynamodb:GetItem` on it.
-    //
-    // Same-region / same-account cross-stack import: dev is
-    // us-west-2 / prod is us-east-1, and exemem-infra deploys to
-    // identical regions, so `Fn.importValue` resolves locally without
-    // CFN cross-region complications.
-    // =====================================================
-    const apiKeysTableName = Fn.importValue(
-      `ExememApiKeysTableName-${envName}`,
-    );
-    const apiKeysTableArn = Stack.of(this).formatArn({
-      service: "dynamodb",
-      resource: "table",
-      resourceName: apiKeysTableName,
-    });
-    schemaServiceFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: "ValidateExememApiKeys",
-        actions: ["dynamodb:GetItem"],
-        // Validation is a hashed-key lookup against the partition key
-        // (`api_key_hash`); no scans, no GSI reads. Scoping to GetItem
-        // keeps blast radius minimal even if the role is misused.
-        resources: [apiKeysTableArn],
-      }),
-    );
-    schemaServiceFn.addEnvironment("API_KEYS_TABLE", apiKeysTableName);
-
-    // =====================================================
-    // Release verifier (EdgeVector/lastdb-verifier, docs/release-log.md).
-    //
-    // The registry hands each new release and each owner revocation to the
-    // verifier as one job on its public queue, and the v2 verification
-    // route points developers at the verifier's public release log. The
-    // registry is off the install trust path: it only stores and enqueues.
-    //
-    // VerifierStack-{dev,prod} deploy to the same region and account as
-    // this stack, so Fn.importValue resolves locally. The import also keeps
-    // the verifier from removing these exports while this stack uses them.
-    // =====================================================
-    schemaServiceFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: "SendReleaseVerifierJobs",
-        actions: ["sqs:SendMessage"],
-        resources: [Fn.importValue(`LastdbVerifierPublicQueueArn-${envName}`)],
-      }),
-    );
-    schemaServiceFn.addEnvironment(
-      "RELEASE_VERIFIER_QUEUE_URL",
-      Fn.importValue(`LastdbVerifierPublicQueueUrl-${envName}`),
-    );
-    schemaServiceFn.addEnvironment(
-      "RELEASE_LOG_URL",
-      Fn.importValue(`LastdbVerifierLogUrl-${envName}`),
-    );
 
     // =====================================================
     // Schema mutation gate observability.
