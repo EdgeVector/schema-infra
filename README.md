@@ -152,7 +152,7 @@ health, canonical vocabulary, and schema advice):
 | `OBS_SENTRY_RELEASE` | Sentry release tag; `deploy.sh` defaults this to `schema-infra@<git-sha>` |
 | `OBS_SENTRY_ENVIRONMENT` | Sentry environment tag; `deploy.sh` defaults this to the deploy target (`dev` or `prod`) |
 
-The local HTTP binary is [`schema_service/crates/server_http`](https://github.com/EdgeVector/lastdb/tree/main/schema_service/crates/server_http) in `EdgeVector/lastdb`.
+The Lambda handler crate is [`schema_service/crates/server_lambda`](https://github.com/EdgeVector/lastdb/tree/main/schema_service/crates/server_lambda) in `EdgeVector/lastdb`.
 
 ## License
 

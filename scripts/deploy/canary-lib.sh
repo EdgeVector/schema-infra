@@ -119,17 +119,12 @@ set_canary_weights() {
   return 0
 }
 
-# Best-effort operator alert for a refused canary pin: a Situations notice
-# (FYI timeline) plus stderr. Never fails the caller by itself.
+# Operator alert for a refused canary pin: write to stderr and canary.log.
+# Never fails the caller by itself.
 canary_alert() {
   local summary="$1"
   echo "ALERT: $summary" >&2
   canary_log "ALERT: $summary"
-  if command -v situations >/dev/null 2>&1 && [ "${SCHEMA_CANARY_ALERT_NOTICE:-1}" != "0" ]; then
-    situations notice --title "schema-infra canary pin refused" --kind deploy \
-      --system schema-service --actor script:schema-infra-canary \
-      --summary "$summary" >/dev/null 2>&1 || true
-  fi
 }
 
 # Promote canary version to 100% (must clear routing weights).

@@ -13,6 +13,7 @@ import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations"
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as logs from "aws-cdk-lib/aws-logs";
 import { Environment } from "./environment";
 import { schemaLiveVersion } from "./schema-live-version";
 
@@ -95,7 +96,8 @@ export class SchemaServiceStack extends Stack {
       currentVersionOptions: {
         removalPolicy: RemovalPolicy.RETAIN,
       },
-      timeout: Duration.seconds(300),
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      timeout: Duration.seconds(15),
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
@@ -134,7 +136,7 @@ export class SchemaServiceStack extends Stack {
           apigwv2.CorsHttpMethod.POST,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
-        allowHeaders: ["Content-Type", "Authorization"],
+        allowHeaders: ["Content-Type"],
         maxAge: Duration.days(1),
       },
     });
