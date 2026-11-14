@@ -272,7 +272,7 @@ _canary_inspect_alarm_list() {
     status="missing"
     firing=""
   fi
-  printf '%s\t%s\t%s\t%s\n' "$status" "$firing" "$none_count" "$total"
+  printf '%s|%s|%s|%s\n' "$status" "$firing" "$none_count" "$total"
 }
 
 # Inspect the configured soak alarms.
@@ -287,7 +287,7 @@ canary_alarms_inspect() {
   local names row status firing none_count total
   names="$(canary_default_alarm_names)"
   row="$(_canary_inspect_alarm_list "$region" "$names")"
-  IFS="$(printf '\t')" read -r status firing none_count total <<EOF
+  IFS='|' read -r status firing none_count total <<EOF
 $row
 EOF
   # Pre-CDK cutover bridge: when a canary is still soaking on the previous
@@ -296,10 +296,10 @@ EOF
   # exist. Once CDK updates SchemaServiceStack-prod, the new alarms exist and
   # the legacy alarms are removed, so any missing alarm fails closed.
   if [ -z "${SCHEMA_CANARY_ALARM_NAMES:-}" ] && [ "$status" = "missing" ] && \
-     [ "$total" -gt 0 ] && [ "$none_count" -eq "$total" ]; then
+     [ "${total:-0}" -gt 0 ] && [ "${none_count:-0}" -eq "${total:-0}" ]; then
     canary_log "canary: service alarms not yet deployed in $region; checking pre-cutover stack alarms" >&2
     row="$(_canary_inspect_alarm_list "$region" "schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod")"
-    IFS="$(printf '\t')" read -r status firing _ _ <<EOF
+    IFS='|' read -r status firing _ _ <<EOF
 $row
 EOF
   fi
