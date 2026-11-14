@@ -49,9 +49,8 @@ schema_lambda_export_profile_rustflags
 
 schema_lambda_stage yum schema_lambda_ensure_build_packages
 
-# Cargo needs to fetch private cross-repo git deps (e.g. exemem_common
-# from EdgeVector/exemem-infra). Conditional on GH_PAT so local builds
-# (no token) still work for fully-public-dep cases.
+# Configure git HTTPS auth when GH_PAT is provided for private GitHub git
+# dependencies; local builds without a token still work for public crates.
 if [ -n "${GH_PAT:-}" ]; then
     git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
 fi
@@ -97,11 +96,9 @@ schema_lambda_stage cargo-lambda schema_lambda_ensure_cargo_lambda
 # that the prebuilt binary is reliably on PATH (/usr/local/bin); the rustup
 # cargo resolves it. Verified in an isolated AL2023 container.
 #
-# Always enable FastEmbed for live resolve (native_component_cover@1). The
-# model is served from the dedicated Lambda Layer at /opt/fastembed_cache.
-# The transform-wasm feature was removed from fold; do not reintroduce
-# ENABLE_TRANSFORM_WASM here.
-echo "Building with --features fastembed (native_component_cover resolve requires live embeddings)"
+# Stateless deterministic advisory service backed by compile-time
+# builtin_canonical_fields.json; no ONNX/fastembed or transform-wasm features.
+echo "Building schema_service_server_lambda (stateless advisory service)"
 echo "Cargo target dir: $CARGO_TARGET_DIR"
 echo "Lambda artifact dir: $LAMBDA_DIR"
 echo "Cargo build jobs: $CARGO_BUILD_JOBS"
@@ -118,8 +115,7 @@ schema_lambda_stage cargo_build \
         --target x86_64-unknown-linux-gnu \
         --compiler cargo \
         --locked \
-        -p schema_service_server_lambda \
-        --features fastembed
+        -p schema_service_server_lambda
 
 # Repack at maximum deflate. cargo-lambda zips at the default level; the
 # bootstrap binary is already stripped, so the remaining budget lever with

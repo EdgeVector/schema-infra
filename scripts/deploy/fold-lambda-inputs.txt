@@ -6,7 +6,7 @@
 #
 # The list is the path-crate closure of the build in
 # scripts/lambda-container-build.sh:
-#   cargo lambda build -p schema_service_server_lambda --features fastembed --locked
+#   cargo lambda build -p schema_service_server_lambda --locked
 # Normal and build dependencies and `workspace = true` entries that resolve to a
 # path in the root Cargo.toml. The workspace files set the lock, the toolchain,
 # and the Cargo profile.
@@ -17,7 +17,6 @@
 schema_service/crates/server_lambda/
 schema_service/crates/core/
 schema_service/crates/schema_types/
-app_identity_crypto/
 fold_db/crates/observability/
 Cargo.toml
 Cargo.lock

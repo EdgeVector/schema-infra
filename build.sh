@@ -7,14 +7,12 @@
 #      pinned to main). Contains schema_service and lastdb_node
 #      in one cargo workspace, so no sibling checkout is needed.
 #   2. Build the Lambda zip from `fold/schema_service/crates/server_lambda/`
-#      (runs cargo-lambda inside Amazon Linux 2023 so ort-sys, which
-#      fastembed pulls in, links against the Lambda runtime glibc). Cargo
-#      intermediates stay in container-local /tmp; only the final lambda zip is
-#      written back to fold/target/lambda for CDK.
+#      (runs cargo-lambda inside Amazon Linux 2023 so the compiled binary
+#      links against the Lambda runtime glibc). Cargo intermediates stay in
+#      container-local /tmp; only the final lambda zip is written back to
+#      fold/target/lambda for CDK.
 #   3. Extract the zip to `fold/target/lambda/server_lambda-extracted/`
 #      which is the path CDK reads via `Code.fromAsset(...)`.
-#   4. Download the fastembed model files into `target/fastembed_layer/`
-#      (at schema-infra repo root). CDK reads this via Code.fromAsset.
 #
 # Usage:
 #   ./build.sh                    # release build
@@ -46,9 +44,8 @@ echo "fold submodule at: $(git -C "$FOLD_DIR" rev-parse --short HEAD)"
 # =============================================================
 # 2. Lambda build inside Docker (AL2023 == Lambda runtime)
 #
-# cargo-lambda's default zig-based cross-compile cannot link ort-sys
-# (fastembed's ONNX Runtime). We build natively inside the AL2023
-# image, so the resulting binary matches the runtime glibc exactly.
+# Build natively inside the AL2023 image so the resulting binary matches
+# the provided.al2023 runtime glibc exactly.
 #
 # Layout inside the container:
 #   /build/schema-infra/         ← this repo
@@ -149,14 +146,6 @@ echo "Zip:       $ZIP_PATH (${SIZE_MB}MB)"
 echo "Extracted: $EXTRACTED_DIR"
 ls -la "$EXTRACTED_DIR"
 "$SCRIPT_DIR/scripts/deploy/dependency-budget.sh"
-
-# =============================================================
-# 4. Fastembed Layer — delegated to scripts/deploy/ensure-layer.sh so
-#    the CDK deploy path (deploy.sh --skip-build) can materialize the
-#    Layer asset without running this whole build.
-# =============================================================
-echo ""
-bash "$SCRIPT_DIR/scripts/deploy/ensure-layer.sh"
 
 echo ""
 echo "=== Build complete ==="

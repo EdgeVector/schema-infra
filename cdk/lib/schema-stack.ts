@@ -13,75 +13,11 @@ import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations"
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as logs from "aws-cdk-lib/aws-logs";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Environment } from "./environment";
 import { schemaLiveVersion } from "./schema-live-version";
 
 export interface SchemaServiceStackProps extends StackProps {
   environment?: string;
-}
-
-interface SchemaStoreR2DeployConfig {
-  bucketName: string;
-  endpointUrl: string;
-  accessKeyIdSecretName: string;
-  secretAccessKeySecretName: string;
-  region: string;
-}
-
-function envTrimmed(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value ? value : undefined;
-}
-
-function firstEnv(...names: string[]): string | undefined {
-  for (const name of names) {
-    const value = envTrimmed(name);
-    if (value) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function schemaStoreR2DeployConfigFromEnv(): SchemaStoreR2DeployConfig | undefined {
-  const bucketName = firstEnv("SCHEMA_STORE_R2_DEPLOY_BUCKET", "SCHEMA_STORE_BUCKET");
-  const endpointUrl = firstEnv(
-    "SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL",
-    "SCHEMA_STORE_ENDPOINT_URL",
-    "SCHEMA_STORE_R2_ENDPOINT",
-  );
-  const accessKeyIdSecretName = firstEnv("SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME");
-  const secretAccessKeySecretName = firstEnv(
-    "SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME",
-  );
-  const region = firstEnv("SCHEMA_STORE_R2_REGION", "SCHEMA_STORE_REGION") ?? "auto";
-
-  const provided = [
-    bucketName,
-    endpointUrl,
-    accessKeyIdSecretName,
-    secretAccessKeySecretName,
-  ].filter(Boolean).length;
-  if (provided === 0) {
-    return undefined;
-  }
-  if (provided !== 4) {
-    throw new Error(
-      "R2 schema-store deploy config is partial. Set SCHEMA_STORE_R2_DEPLOY_BUCKET, " +
-        "SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL, SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME, " +
-        "and SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME together.",
-    );
-  }
-
-  return {
-    bucketName: bucketName!,
-    endpointUrl: endpointUrl!,
-    accessKeyIdSecretName: accessKeyIdSecretName!,
-    secretAccessKeySecretName: secretAccessKeySecretName!,
-    region,
-  };
 }
 
 export class SchemaServiceStack extends Stack {
@@ -111,32 +47,15 @@ export class SchemaServiceStack extends Stack {
       process.env.OBS_SENTRY_RELEASE ?? process.env.OBS_RELEASE ?? "";
     const obsSentryEnvironment =
       process.env.OBS_SENTRY_ENVIRONMENT ?? envName;
-    const schemaStoreR2Config = schemaStoreR2DeployConfigFromEnv();
-    const schemaStoreR2AccessKeyIdSecret = schemaStoreR2Config
-      ? secretsmanager.Secret.fromSecretNameV2(
-          this,
-          "SchemaStoreR2AccessKeyIdSecret",
-          schemaStoreR2Config.accessKeyIdSecretName,
-        )
-      : undefined;
-    const schemaStoreR2SecretAccessKeySecret = schemaStoreR2Config
-      ? secretsmanager.Secret.fromSecretNameV2(
-          this,
-          "SchemaStoreR2SecretAccessKeySecret",
-          schemaStoreR2Config.secretAccessKeySecretName,
-        )
-      : undefined;
 
     // =====================================================
-    // S3 Bucket for Schema Service state
+    // Retained S3 Bucket (historical Schema Service state)
     //
-    // Domain blobs (schemas, canonical fields, apps, near-misses, etc.)
-    // live in this bucket. Writes use If-Match ETag RMW for JSON blobs.
-    // Transform/view/WASM plane storage was ripped; do not reintroduce
-    // views.json / transforms.json / wasm/ as product surfaces.
-    //
-    // Versioning is enabled so we keep rollback history if a bad PUT
-    // ever corrupts a blob. S3 versioning costs pennies at this scale.
+    // The advisory Lambda is stateless and reads its canonical vocabulary
+    // from compile-time `builtin_canonical_fields.json`, with no S3 grant or
+    // runtime bucket env var. This retained bucket stays in the stack so
+    // CloudFormation never orphans or alters existing versioned objects or
+    // external stack-output readers.
     // =====================================================
     const schemaBucket = new s3.Bucket(this, "SchemaBucket", {
       bucketName: `schema-service-${envName}-${Stack.of(this).account}`,
@@ -148,50 +67,11 @@ export class SchemaServiceStack extends Stack {
     });
 
     // =====================================================
-    // Fastembed Model Layer
-    //
-    // The schema service uses fastembed (all-MiniLM-L6-v2 ONNX) for
-    // semantic matching of schema names and canonical fields. Pulling
-    // the model from HuggingFace at cold start cost ~40s of wasted
-    // retries before falling back to a heuristic — see the CloudWatch
-    // trace in PR #11 for the before-picture.
-    //
-    // We ship the model as a Layer rather than bundling it in the
-    // function zip so that:
-    //   - function code stays ~20MB and iterates in seconds on deploy;
-    //   - the 90MB model is uploaded once per model-version change,
-    //     not on every code edit;
-    //   - layer content lands at /opt/ in the running Lambda, which
-    //     matches the FASTEMBED_CACHE_DIR=/opt/fastembed_cache set by
-    //     the function (see schema_service submodule's server_lambda).
-    //
-    // The layer asset directory is populated by build.sh — it downloads
-    // the five files fastembed needs (model.onnx + four tokenizer
-    // files) from the pinned HF revision into hf-hub 0.4 cache layout.
-    //
-    // The layer also holds ONNX Runtime at /opt/lib/libonnxruntime.so for
-    // the same reason: it changes only with an `ort` bump, and linked in it
-    // was about 7 MB of the 15 MiB function zip bar.
-    // =====================================================
-    const fastembedLayer = new lambda.LayerVersion(this, "FastembedModelLayer", {
-      code: lambda.Code.fromAsset(
-        "../target/fastembed_layer",
-      ),
-      compatibleRuntimes: [lambda.Runtime.PROVIDED_AL2023],
-      compatibleArchitectures: [lambda.Architecture.X86_64],
-      description:
-        "fastembed all-MiniLM-L6-v2 ONNX model + tokenizer files at /opt/fastembed_cache/, ONNX Runtime at /opt/lib/",
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
-
-    // =====================================================
     // Schema Service Lambda Function
     // =====================================================
-    // Lambda source lives in the `fold` monorepo (submodule at
-    // `schema-infra/fold/`). The build pipeline in `build.sh` runs
-    // `cargo lambda build -p schema_service_server_lambda` from the
-    // monorepo's workspace root and extracts the resulting bootstrap.zip
-    // to the path referenced below.
+    // Stateless deterministic advisory service built from `fold/`
+    // (`schema_service/crates/server_lambda`). `build.sh` compiles the
+    // AL2023 x86_64 zip and extracts it to `server_lambda-extracted`.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.X86_64,
@@ -199,7 +79,6 @@ export class SchemaServiceStack extends Stack {
       code: lambda.Code.fromAsset(
         "../fold/target/lambda/server_lambda-extracted",
       ),
-      layers: [fastembedLayer],
       // Keep every published version when CDK replaces `currentVersion`.
       // Without this, CloudFormation deletes the previous version at the
       // end of each deploy (the default DeletionPolicy for
@@ -216,46 +95,16 @@ export class SchemaServiceStack extends Stack {
       currentVersionOptions: {
         removalPolicy: RemovalPolicy.RETAIN,
       },
-      // First cold start on an empty bucket seeds built-in schemas and
-      // RMW-persists domain blobs. Once populated, later cold starts
-      // load blobs (< 1s); warm invocations complete in milliseconds.
       timeout: Duration.seconds(300),
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
-        // ONNX Runtime from the fastembed layer (scripts/deploy/ensure-layer.sh).
-        // The binary loads it at run time instead of linking it in; without
-        // the file, embedder init fails and the Lambda runs without embeddings.
-        ORT_DYLIB_PATH: "/opt/lib/libonnxruntime.so",
         OBS_SENTRY_DSN: obsSentryDsn,
         OBS_SENTRY_RELEASE: obsSentryRelease,
         OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
-        // The schema service persists all state in this S3 bucket via
-        // S3BlobPersistence. No filesystem required, no VPC, no EFS.
-        // User-submitted schemas and canonical fields persist across
-        // cold starts because S3 is the source of truth.
-        // Definitions are isolated. App identities keep the existing store.
-        SCHEMA_DEFINITION_NAMESPACE: definitionNamespace,
-        SCHEMA_STORE_BUCKET: schemaStoreR2Config?.bucketName ?? schemaBucket.bucketName,
-        ...(schemaStoreR2Config
-          ? {
-              // Optional R2/S3-compatible deploy wiring. Credential values are
-              // CloudFormation dynamic references to Secrets Manager, not raw
-              // deploy-runner env vars.
-              SCHEMA_STORE_ENDPOINT_URL: schemaStoreR2Config.endpointUrl,
-              SCHEMA_STORE_REGION: schemaStoreR2Config.region,
-              SCHEMA_STORE_ACCESS_KEY_ID:
-                schemaStoreR2AccessKeyIdSecret!.secretValue.unsafeUnwrap(),
-              SCHEMA_STORE_SECRET_ACCESS_KEY:
-                schemaStoreR2SecretAccessKeySecret!.secretValue.unsafeUnwrap(),
-            }
-          : {}),
         ENVIRONMENT: envName,
       },
     });
-
-    // Grant Lambda read/write on the schema bucket (domain blobs).
-    schemaBucket.grantReadWrite(schemaServiceFn);
 
     // Production keeps its observed live version throughout CDK deployment.
     // Only the checked canary path may route traffic to the published candidate.
@@ -283,8 +132,7 @@ export class SchemaServiceStack extends Stack {
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
-          apigwv2.CorsHttpMethod.PUT,
-          apigwv2.CorsHttpMethod.OPTIONS
+          apigwv2.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: ["Content-Type", "Authorization"],
         maxAge: Duration.days(1),
@@ -374,308 +222,65 @@ export class SchemaServiceStack extends Stack {
     }
 
     // =====================================================
-    // Schema embeddings — DynamoDB table.
-    // =====================================================
-
-    // Embeddings table. One table, two kinds share the key:
-    //   PK `kind` (S) = "descriptive_name" | "canonical_field"
-    //   SK `key`  (S) = schema identity hash | canonical field name
+    // Retained DynamoDB embeddings table (historical state)
     //
-    // PAY_PER_REQUEST. Request-path reads and writes use this table.
-    // The construct ID is the live CloudFormation logical ID.
-    const atomicEmbeddingsTable = new dynamodb.Table(this, "AtomicVocabularyEmbeddingsTable", {
+    // Retained in the stack so CloudFormation preserves the live table;
+    // the stateless advisory Lambda neither reads nor writes it.
+    // =====================================================
+    new dynamodb.Table(this, "AtomicVocabularyEmbeddingsTable", {
       tableName: `schema-embeddings-${envName}-${definitionNamespace}`,
       partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
-    atomicEmbeddingsTable.grantReadWriteData(schemaServiceFn);
-    schemaServiceFn.addEnvironment("SCHEMA_EMBEDDINGS_TABLE", atomicEmbeddingsTable.tableName);
 
     // =====================================================
-    // Schema mutation gate quota state.
+    // Canary & Service Health CloudWatch Alarms
     // =====================================================
-
-    // Challenge verification is stateless HMAC, so Lambda only needs
-    // shared quota counters. The server_lambda DynamoDB adapter expects:
-    //   PK bucket_key (S): "<window_secs>:<bucket_label>"
-    //   SK window_start (N): unix window start
-    //   TTL expires_at (N): unix expiry for DynamoDB TTL cleanup
-    const mutationGateQuotaTable = new dynamodb.Table(
+    const lambdaErrorsAlarm = new cloudwatch.Alarm(
       this,
-      "SchemaMutationGateQuotaTable",
+      "SchemaServiceLambdaErrorsAlarm",
       {
-        tableName: `schema-mutation-gate-quotas-${envName}`,
-        partitionKey: {
-          name: "bucket_key",
-          type: dynamodb.AttributeType.STRING,
-        },
-        sortKey: {
-          name: "window_start",
-          type: dynamodb.AttributeType.NUMBER,
-        },
-        timeToLiveAttribute: "expires_at",
-        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-        removalPolicy: environment.isProd
-          ? RemovalPolicy.RETAIN
-          : RemovalPolicy.DESTROY,
-      },
-    );
-    mutationGateQuotaTable.grantReadWriteData(schemaServiceFn);
-    schemaServiceFn.addEnvironment(
-      "SCHEMA_MUTATION_GATE_QUOTA_TABLE",
-      mutationGateQuotaTable.tableName,
-    );
-
-    const mutationGateHmacSecret = new secretsmanager.Secret(
-      this,
-      "SchemaMutationGateHmacSecret",
-      {
-        description: `HMAC secret for schema mutation PoW challenges (${envName})`,
-        generateSecretString: {
-          passwordLength: 48,
-          excludePunctuation: true,
-        },
-      },
-    );
-    schemaServiceFn.addEnvironment(
-      "SCHEMA_MUTATION_GATE_HMAC_SECRET",
-      mutationGateHmacSecret.secretValue.unsafeUnwrap(),
-    );
-    // Enforced in every environment since 2026-08-18 (Tom-approved prod
-    // cutover, decision-2026-08-18-schema-pow-prod-cutover-execute).
-    schemaServiceFn.addEnvironment("SCHEMA_MUTATION_GATE_ENFORCE", "true");
-    // DEV has no hourly/daily schema count caps; proof of work stays enforced.
-    if (environment.isDev) {
-      for (const identity of ["NODE", "DEV"]) {
-        for (const window of ["HOUR", "DAY"]) {
-          schemaServiceFn.addEnvironment(
-            `SCHEMA_MUTATION_GATE_${identity}_NOVEL_${window}_QUOTA`, "0",
-          );
-        }
-      }
-    }
-
-    // =====================================================
-    // Schema mutation gate observability.
-    //
-    // The schema service emits Rust tracing log fields with:
-    //   metric="schema_mutation_gate_challenge_total"
-    //   metric="schema_mutation_gate_enforce_total"
-    // plus status/window/bucket and difficulty bits. Metric filters
-    // intentionally count stable text terms; Logs Insights widgets parse
-    // numeric bit fields for operator tuning views.
-    // =====================================================
-    const mutationGateNamespace = "SchemaService/MutationGate";
-    const mutationGateLogGroup = schemaServiceFn.logGroup;
-    const mutationGateMetric = (
-      metricName: string,
-      label: string,
-      period = Duration.minutes(5),
-      statistic = "sum",
-    ) =>
-      new cloudwatch.Metric({
-        namespace: mutationGateNamespace,
-        metricName,
-        statistic,
-        period,
-        label,
-      });
-    const addMutationGateCountFilter = (
-      id: string,
-      metricName: string,
-      terms: string[],
-    ) =>
-      new logs.MetricFilter(this, id, {
-        logGroup: mutationGateLogGroup,
-        filterName: `${envName}-${metricName}`,
-        filterPattern: logs.FilterPattern.allTerms(...terms),
-        metricNamespace: mutationGateNamespace,
-        metricName,
-        metricValue: "1",
-        unit: cloudwatch.Unit.COUNT,
-      });
-
-    addMutationGateCountFilter(
-      "MutationGateChallengeIssuedFilter",
-      "ChallengeIssued",
-      ["schema_mutation_gate_challenge_total", "status", "issued"],
-    );
-    addMutationGateCountFilter("MutationGateAcceptedNovelFilter", "AcceptedNovel", [
-      "schema_mutation_gate_enforce_total",
-      "status",
-      "ok",
-    ]);
-
-    const rejectStatuses = [
-      "invalid_challenge_request",
-      "node_key_required",
-      "node_key_invalid",
-      "node_signature_required",
-      "node_signature_invalid",
-      "proof_of_work_required",
-      "proof_of_work_invalid",
-      "proof_of_work_expired",
-      "quota_exceeded",
-      "internal",
-    ];
-    for (const status of rejectStatuses) {
-      addMutationGateCountFilter(
-        `MutationGateReject${toPascalCase(status)}Filter`,
-        `Reject${toPascalCase(status)}`,
-        ["schema_mutation_gate_enforce_total", "status", status],
-      );
-    }
-
-    const quotaBuckets = ["node", "ip24", "app", "dev_key"];
-    const quotaWindows = ["minute", "hour", "day"];
-    for (const bucket of quotaBuckets) {
-      for (const window of quotaWindows) {
-        addMutationGateCountFilter(
-          `MutationGateQuota${toPascalCase(bucket)}${toPascalCase(window)}Filter`,
-          `QuotaExceeded${toPascalCase(bucket)}${toPascalCase(window)}`,
-          [
-            "schema_mutation_gate_enforce_total",
-            "quota_exceeded",
-            `bucket="${bucket}"`,
-            `window="${window}"`,
-          ],
-        );
-      }
-    }
-
-    // `RejectQuotaExceeded` is the metric-filter contract for every
-    // enforcement rejection with status="quota_exceeded". The Lambda emits
-    // that status on every quota rejection, and this metric has production
-    // datapoints. Use it for the alarm rather than the bucket/window filter
-    // names, which are a dashboard breakdown and have no live datapoints.
-    const quotaHourMetric = mutationGateMetric(
-      "RejectQuotaExceeded",
-      "quota rejections",
-      Duration.hours(1),
-      "sum",
-    ).with({ id: "q" });
-    const hourlyQuotaExceeded = new cloudwatch.MathExpression({
-      expression: "q",
-      usingMetrics: { q: quotaHourMetric },
-      period: Duration.hours(1),
-      label: "hourly cap rejects",
-    });
-    const hourlyQuotaAlarm = new cloudwatch.Alarm(
-      this,
-      "MutationGateHourlyQuotaAlarm",
-      {
-        alarmName: `schema-mutation-gate-hourly-quota-${envName}`,
+        alarmName: `schema-service-lambda-errors-${envName}`,
         alarmDescription:
-          "Schema mutation gate saw sustained hourly quota rejections; inspect caller shape before retuning SCHEMA_MUTATION_GATE_NOVEL_HOUR_QUOTA.",
-        metric: hourlyQuotaExceeded,
-        threshold: 5,
-        evaluationPeriods: 3,
-        datapointsToAlarm: 3,
-        comparisonOperator:
-          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      },
-    );
-    const internalErrorAlarm = new cloudwatch.Alarm(
-      this,
-      "MutationGateInternalErrorAlarm",
-      {
-        alarmName: `schema-mutation-gate-internal-error-${envName}`,
-        alarmDescription:
-          "Schema mutation gate emitted an internal enforcement error; block canary promotion and inspect before retrying.",
-        metric: mutationGateMetric(
-          "RejectInternal",
-          "internal errors",
-          Duration.minutes(5),
-          "sum",
-        ),
-        threshold: 0,
+          "Schema Service Lambda reported >= 1 invocation error in 5 minutes; blocks canary promotion and triggers rollback.",
+        metric: schemaServiceFn.metricErrors({
+          period: Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 1,
         evaluationPeriods: 1,
         datapointsToAlarm: 1,
         comparisonOperator:
-          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       },
     );
 
-    const mutationGateDashboard = new cloudwatch.Dashboard(
+    const http5xxAlarm = new cloudwatch.Alarm(
       this,
-      "MutationGateDashboard",
+      "SchemaServiceHttp5xxAlarm",
       {
-        dashboardName: `schema-mutation-gate-${envName}`,
-        defaultInterval: Duration.hours(24),
+        alarmName: `schema-service-http-5xx-${envName}`,
+        alarmDescription:
+          "Schema Service HTTP API returned >= 1 5xx response in 5 minutes; blocks canary promotion and triggers rollback.",
+        metric: new cloudwatch.Metric({
+          namespace: "AWS/ApiGateway",
+          metricName: "5xx",
+          dimensionsMap: {
+            ApiId: httpApi.apiId,
+          },
+          period: Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        datapointsToAlarm: 1,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       },
-    );
-    mutationGateDashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: "Hourly quota rejections",
-        width: 12,
-        left: [quotaHourMetric],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Rejects by status",
-        width: 12,
-        left: rejectStatuses.map((status) =>
-          mutationGateMetric(
-            `Reject${toPascalCase(status)}`,
-            status,
-            Duration.minutes(5),
-            "sum",
-          ),
-        ),
-      }),
-    );
-    mutationGateDashboard.addWidgets(
-      new cloudwatch.GraphWidget({
-        title: "Challenge issuance and accepted novel creates",
-        width: 12,
-        left: [
-          mutationGateMetric("ChallengeIssued", "challenges issued"),
-          mutationGateMetric("AcceptedNovel", "accepted novel creates"),
-        ],
-      }),
-      new cloudwatch.AlarmWidget({
-        title: "Sustained hourly-cap alarm",
-        width: 6,
-        alarm: hourlyQuotaAlarm,
-      }),
-      new cloudwatch.AlarmWidget({
-        title: "Mutation-gate internal-error alarm",
-        width: 6,
-        alarm: internalErrorAlarm,
-      }),
-    );
-    mutationGateDashboard.addWidgets(
-      new cloudwatch.LogQueryWidget({
-        title: "Issued difficulty bits",
-        width: 12,
-        logGroupNames: [mutationGateLogGroup.logGroupName],
-        view: cloudwatch.LogQueryVisualizationType.LINE,
-        queryLines: [
-          "fields @timestamp, @message",
-          "filter @message like /schema_mutation_gate_challenge_total/",
-          "parse @message /difficulty_bits=(?<difficulty_bits>\\d+)/",
-          "parse @message /base_bits=(?<base_bits>\\d+)/",
-          "parse @message /adaptive_bits=(?<adaptive_bits>\\d+)/",
-          "parse @message /catalog_bits=(?<catalog_bits>\\d+)/",
-          "stats avg(difficulty_bits) as avg_difficulty, max(difficulty_bits) as max_difficulty, avg(base_bits) as base, avg(adaptive_bits) as adaptive, avg(catalog_bits) as catalog by bin(5m)",
-        ],
-      }),
-      new cloudwatch.LogQueryWidget({
-        title: "Quota rejects by window and bucket",
-        width: 12,
-        logGroupNames: [mutationGateLogGroup.logGroupName],
-        view: cloudwatch.LogQueryVisualizationType.LINE,
-        queryLines: [
-          "fields @timestamp, @message",
-          "filter @message like /schema_mutation_gate_enforce_total/ and @message like /quota_exceeded/",
-          "parse @message /bucket=\"(?<bucket>[^\"]+)\"/",
-          "parse @message /window=\"(?<window>[^\"]+)\"/",
-          "stats count(*) as rejects by bin(5m), window, bucket",
-        ],
-      }),
     );
 
     // =====================================================
@@ -729,7 +334,7 @@ export class SchemaServiceStack extends Stack {
 
     new CfnOutput(this, "SchemaServiceBucketName", {
       value: schemaBucket.bucketName,
-      description: "S3 bucket backing the schema service state",
+      description: "S3 bucket retained from historical schema service state",
     });
 
     new CfnOutput(this, "SchemaServiceFunctionName", {
@@ -742,41 +347,14 @@ export class SchemaServiceStack extends Stack {
       description: "Qualified live alias name (function:live) for canary traffic",
     });
 
-    new CfnOutput(this, "MutationGateDashboardName", {
-      value: mutationGateDashboard.dashboardName,
-      description: "CloudWatch dashboard for schema mutation gate cap and difficulty tuning",
+    new CfnOutput(this, "SchemaServiceLambdaErrorsAlarmName", {
+      value: lambdaErrorsAlarm.alarmName,
+      description: "Alarm on Schema Service Lambda invocation errors",
     });
 
-    new CfnOutput(this, "MutationGateDashboardUrl", {
-      value: `https://${Stack.of(this).region}.console.aws.amazon.com/cloudwatch/home?region=${Stack.of(this).region}#dashboards:name=${mutationGateDashboard.dashboardName}`,
-      description: "Console URL for the schema mutation gate CloudWatch dashboard",
-    });
-
-    new CfnOutput(this, "MutationGateHourlyQuotaAlarmName", {
-      value: hourlyQuotaAlarm.alarmName,
-      description: "Alarm for sustained schema mutation gate hourly quota rejections",
-    });
-    new CfnOutput(this, "MutationGateInternalErrorAlarmName", {
-      value: internalErrorAlarm.alarmName,
-      description: "Alarm that blocks canary promotion on mutation-gate internal errors",
-    });
-
-    new CfnOutput(this, "MutationGateQuotaTableName", {
-      value: mutationGateQuotaTable.tableName,
-      description: "DynamoDB table for schema mutation gate shared quota counters",
-    });
-
-    new CfnOutput(this, "MutationGateHmacSecretName", {
-      value: mutationGateHmacSecret.secretName,
-      description: "Secrets Manager secret backing schema mutation challenge HMAC",
+    new CfnOutput(this, "SchemaServiceHttp5xxAlarmName", {
+      value: http5xxAlarm.alarmName,
+      description: "Alarm on Schema Service HTTP API 5xx responses",
     });
   }
-}
-
-function toPascalCase(value: string): string {
-  return value
-    .split(/[^a-zA-Z0-9]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
 }

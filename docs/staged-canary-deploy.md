@@ -8,8 +8,7 @@
    - **Smoke** (`scripts/deploy/smoke-dev.sh`)
    - Deploy **prod** (`us-east-1`)
    - Keep the previous PROD `live` version throughout CDK deployment.
-   - Read the numbered candidate's health and vocabulary directly.
-   - Verify both versions use the same durable definition store.
+   - Read the numbered candidate's health and vocabulary directly (`scripts/deploy/check-schema-candidate.py`).
    - Pin **5%** of prod `live` alias traffic on the candidate only after those checks.
 3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
@@ -28,24 +27,12 @@
 - The canary always retains the version that `live` served before the deploy.
   CDK receives that observed version through `schemaProdLiveVersion` and keeps the alias there.
   `SchemaServiceCandidateVersion` identifies the separately published candidate.
-- A missing previous version, failed candidate read, or different definition store refuses the canary.
+- A missing previous version or failed candidate read refuses the canary.
   No fallback moves all traffic to the candidate, even when its code checksum matches.
 - The production deploy job and ticker serialize public alias changes.
-  Promotion repeats the definition-store check and uses the observed alias revision.
+  Promotion uses the observed alias revision.
 - The canonical vocabulary DEV phase refuses a new PROD canary or promotion.
   An alarm rollback remains available.
-
-## Definition-generation cutover
-
-A weighted alias chooses a version for each request. It gives no client affinity.
-Do not use it across the legacy and canonical definition generations.
-The compatibility guard compares bucket, endpoint, region, namespace and embedding store.
-The qualified candidate check uses AWS IAM and creates no public endpoint or alias.
-The candidate read requires the deploy role's reviewed `lambda:InvokeFunction` permission.
-
-Keep the production phase held until a separately reviewed cutover preserves each client's definition generation.
-The normal canary applies after both versions use the same store.
-The readiness PR does not move PROD traffic or convert an existing home.
 
 ## “One box”
 
@@ -59,10 +46,10 @@ Lambda is multi-tenant. **5% weighted alias traffic** is the live canary. Overri
 | `CANARY_WEIGHT` | `0.05` | Fraction of live traffic on the new version |
 | `LASTGIT_DEPLOY_SKIP_PROD` | unset | Stop after successful dev smoke |
 | `DEPLOY_FREEZE` | unset | Skip deploys |
-| `SCHEMA_CANARY_ALARM_NAMES` | `schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod` | Prod soak alarms. Unset or empty still uses this pair — never a time-only gate. |
+| `SCHEMA_CANARY_ALARM_NAMES` | `schema-service-lambda-errors-prod schema-service-http-5xx-prod` | Prod soak alarms (Lambda `Errors` + HTTP API `5xx`). Unset or empty still uses this pair — never a time-only gate. |
 | `SCHEMA_CANARY_OPEN_ISSUE` | unset (`0`) | Set to `1` on the GitHub ticker so an abort opens one `schema-canary-rollback` issue. |
 
-A missing named alarm fails the tick and leaves the alias in place. Missing or mismatched clock proof fails a healthy tick and prevents promotion. An ALARM still rolls back a valid weighted alias without clock proof. An empty `AdditionalVersionWeights` map means no canary is in flight: the tick exits 0. A weight map that is not one key at 0.05 fails the tick and leaves the alias in place. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
+An idle `live` alias (empty `AdditionalVersionWeights`) exits 0 even before a first CDK deploy creates new alarms. Whenever an active canary (`unproven`, `soaking`, or `due`) is present, a missing named alarm fails the tick and leaves the alias in place. Missing or mismatched clock proof fails a healthy tick and prevents promotion. An ALARM still rolls back a valid weighted alias without clock proof. A weight map that is not one key at 0.05 fails the tick and leaves the alias in place. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
 
 Install the host-local card filer on a machine that can open the LastDB socket:
 
@@ -70,24 +57,6 @@ Install the host-local card filer on a machine that can open the LastDB socket:
 scripts/deploy/install-canary-rollback-card-launchd.sh install
 scripts/deploy/install-canary-rollback-card-launchd.sh status
 ```
-
-## R2-backed Schema Store
-
-By default, CDK creates an AWS S3 bucket for `SCHEMA_STORE_BUCKET`. To deploy the
-Schema Service Lambda against a Cloudflare R2/S3-compatible registry store, set
-the full deploy-time config together before running `deploy.sh`:
-
-| Variable | Meaning |
-|---|---|
-| `SCHEMA_STORE_R2_DEPLOY_BUCKET` | R2 bucket name passed to `SCHEMA_STORE_BUCKET` |
-| `SCHEMA_STORE_R2_DEPLOY_ENDPOINT_URL` | R2 S3 API endpoint passed to `SCHEMA_STORE_ENDPOINT_URL` |
-| `SCHEMA_STORE_R2_ACCESS_KEY_ID_SECRET_NAME` | AWS Secrets Manager secret name whose value is the R2 access key id |
-| `SCHEMA_STORE_R2_SECRET_ACCESS_KEY_SECRET_NAME` | AWS Secrets Manager secret name whose value is the R2 secret access key |
-| `SCHEMA_STORE_R2_REGION` | Optional region, defaults to `auto` |
-
-Do not export raw R2 key values into the deploy environment. CDK emits Lambda
-environment values for the two credential variables as CloudFormation dynamic
-references to Secrets Manager.
 
 ## Adopt an existing canary without clock proof
 

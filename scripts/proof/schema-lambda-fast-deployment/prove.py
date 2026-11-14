@@ -403,10 +403,10 @@ def check_dependency_budget(dep: dict[str, Any]) -> list[str]:
     if missing:
         die(f"banned_packages_checked missing required needles: {', '.join(missing)}")
     emb = str(dep["embeddings_source"])
-    if emb != "pinned_opt_layer_network_denied":
+    if emb not in {"none_compile_time_vocabulary", "pinned_opt_layer_network_denied"}:
         die(
-            "embeddings_source must be 'pinned_opt_layer_network_denied' "
-            f"(got {emb!r})"
+            "embeddings_source must be 'none_compile_time_vocabulary' "
+            f"(or historical 'pinned_opt_layer_network_denied', got {emb!r})"
         )
     return [
         f"normal_package_count={count} (<{MAX_NORMAL_PACKAGES})",
@@ -478,19 +478,21 @@ def check_safety(safety: dict[str, Any]) -> list[str]:
         (
             "dev_smoke",
             "prod_smoke",
-            "mutation_gate_alarms",
             "weighted_canary",
             "soak_promotion_recorded",
             "secret_handling",
         ),
         "safety_controls.json",
     )
+    alarms_val = safety.get("canary_alarms", safety.get("mutation_gate_alarms"))
+    if alarms_val is None:
+        die("safety_controls.json missing keys: canary_alarms")
     if str(safety["dev_smoke"]).upper() != "PASS":
         die("dev_smoke must be PASS")
     if str(safety["prod_smoke"]).upper() != "PASS":
         die("prod_smoke must be PASS")
-    if str(safety["mutation_gate_alarms"]).upper() not in {"OK", "PASS"}:
-        die("mutation_gate_alarms must be OK/PASS")
+    if str(alarms_val).upper() not in {"OK", "PASS"}:
+        die("canary_alarms must be OK/PASS")
     if safety["weighted_canary"] is not True:
         die("weighted_canary must be true")
     if safety["soak_promotion_recorded"] is not True:
@@ -500,7 +502,7 @@ def check_safety(safety: dict[str, Any]) -> list[str]:
     return [
         "dev_smoke=PASS",
         "prod_smoke=PASS",
-        f"mutation_gate_alarms={safety['mutation_gate_alarms']}",
+        f"canary_alarms={alarms_val}",
         "weighted_canary=true",
         "soak_promotion_recorded=true",
         "secret_handling=locator_only",
@@ -572,7 +574,7 @@ def render_report(
     lines.append("| 5 | code-only / infra / no-impact paths | path_classification.json |")
     lines.append("| 6 | Tip coalescing (3-commit burst) | coalescing.json |")
     lines.append("| 7 | Deps <400 packages; zip <15MB | dependency_budget.json |")
-    lines.append("| 8 | Banned packages absent; pinned embeddings layer | dependency_budget.json |")
+    lines.append("| 8 | Banned packages absent; compile-time vocabulary (no runtime model layer) | dependency_budget.json |")
     lines.append("| 9 | Smoke / canary / alarms / secret handling | safety_controls.json |")
     lines.append("| 10 | Rollback alias <2m, no rebuild | rollback.json |")
     lines.append("| 11 | Committed terminal report (this file) | prove harness |")

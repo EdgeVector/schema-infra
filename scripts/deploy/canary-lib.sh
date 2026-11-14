@@ -7,7 +7,7 @@ CANARY_SOAK_HOURS="${CANARY_SOAK_HOURS:-24}"
 CANARY_WEIGHT="${CANARY_WEIGHT:-0.05}"  # 5% of live prod traffic on the new version
 STATE_DIR="${LASTGIT_DEPLOY_LOG_DIR:-$HOME/.lastgit/deploy-schema-infra}"
 CANARY_ALIAS_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-alias-state.py"
-CANARY_STORE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-definition-store.py"
+CANARY_CANDIDATE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-schema-candidate.py"
 source "$(dirname "${BASH_SOURCE[0]}")/canonical-vocabulary-phase.sh"
 mkdir -p "$STATE_DIR"
 
@@ -72,8 +72,7 @@ version_exists() {
 #   2  REFUSED: OLD no longer exists. The alias is NOT touched.
 #      The caller must alert. Never substitute an older version: on
 #      2026-09-23 that put 90% of prod on 2026-09-01 code.
-#   3  REFUSED: alias read, clock proof, or revision-checked update failed.
-#   4  REFUSED: definition stores differ or cannot be verified.
+#   3  REFUSED: candidate check, alias read, clock proof, or revision-checked update failed.
 set_canary_weights() {
   local fn="$1" region="$2" old_ver="$3" new_ver="$4" alias_file request_file
   canonical_vocabulary_require_environment prod || return 3
@@ -89,9 +88,7 @@ set_canary_weights() {
     canary_log "canary: REFUSED — pre-deploy live version old=$old_ver no longer exists; not pinning any other version; live alias left as is (new=$new_ver)"
     return 2
   fi
-  python3 "$CANARY_STORE_HELPER" --function-name "$fn" --region "$region" \
-    --old "$old_ver" --new "$new_ver" || return 4
-  python3 "$(dirname "$CANARY_STORE_HELPER")/check-schema-candidate.py" \
+  python3 "$CANARY_CANDIDATE_HELPER" \
     --function-name "$fn" --region "$region" --version "$new_ver" || return 3
   alias_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-alias.XXXXXX")"
   request_file="$(mktemp "${TMPDIR:-/tmp}/schema-canary-pin.XXXXXX")"
@@ -137,18 +134,15 @@ canary_alert() {
 
 # Promote canary version to 100% (must clear routing weights).
 promote_canary_full() {
-  local fn="$1" region="$2" new_ver="$3" revision="${4:-}" alias old_ver observed_revision
+  local fn="$1" region="$2" new_ver="$3" revision="${4:-}" alias observed_revision
   canonical_vocabulary_require_environment prod || return 1
   [ -n "${new_ver:-}" ] || return 1
   alias="$(aws lambda get-alias --function-name "$fn" --name live --region "$region" \
     --query '{version:FunctionVersion,revision:RevisionId,weights:RoutingConfig.AdditionalVersionWeights}' --output json)" || return 1
   printf '%s' "$alias" | jq -e --arg new "$new_ver" --argjson weight "$CANARY_WEIGHT" \
     '.weights == {($new): $weight}' >/dev/null || return 1
-  old_ver="$(printf '%s' "$alias" | jq -er '.version')" || return 1
   observed_revision="$(printf '%s' "$alias" | jq -er '.revision')" || return 1
   [ -z "$revision" ] || [ "$revision" = "$observed_revision" ] || return 1
-  python3 "$CANARY_STORE_HELPER" --function-name "$fn" --region "$region" \
-    --old "$old_ver" --new "$new_ver" || return 1
   canary_log "canary: promote 100% → version $new_ver (clear routing weights)"
   aws lambda update-alias \
     --function-name "$fn" \
@@ -182,7 +176,7 @@ rollback_canary() {
 
 canary_default_alarm_names() {
   if [ -z "${SCHEMA_CANARY_ALARM_NAMES:-}" ]; then
-    printf '%s\n' "schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod"
+    printf '%s\n' "schema-service-lambda-errors-prod schema-service-http-5xx-prod"
   else
     printf '%s\n' "$SCHEMA_CANARY_ALARM_NAMES"
   fi
@@ -201,9 +195,8 @@ canary_rollback_summary() {
 
 # After a successful alias abort, open one GitHub issue. The ubuntu ticker
 # cannot open folddb.sock, so it never calls kanban. SCHEMA_CANARY_OPEN_ISSUE=1
-# (set by canary-ticker.yml) enables the hop. Tests leave it unset unless they
-# cover the issue path. If gh fails, write the four fields to
-# GITHUB_STEP_SUMMARY and return 1.
+# (set by canary-ticker.yml) enables the hop. If gh fails, write the four fields
+# to GITHUB_STEP_SUMMARY and return 1.
 open_canary_rollback_issue() {
   local alarm="$1" fn="$2" old="$3" new="$4"
   local repo title bodyf gh_bin
@@ -248,18 +241,11 @@ abort_live_canary() {
   return 1
 }
 
-# Inspect the configured soak alarms.
-# stdout: STATUS<TAB>FIRING
-#   STATUS is ok | alarm | missing
-#   FIRING is a comma-separated list of names in ALARM (empty unless STATUS=alarm)
-# A missing/unreadable configured alarm is missing: the tick must not abort
-# the alias. ALARM plus a valid canary aborts. ok means every name is
-# OK or INSUFFICIENT_DATA.
-canary_alarms_inspect() {
-  local region="$1"
-  local names name state status="ok" firing="" missing=0
-  names="$(canary_default_alarm_names)"
+_canary_inspect_alarm_list() {
+  local region="$1" names="$2"
+  local name state status="ok" firing="" missing=0 none_count=0 total=0
   for name in $names; do
+    total=$((total + 1))
     state=$(aws cloudwatch describe-alarms --alarm-names "$name" --region "$region" \
       --query 'MetricAlarms[0].StateValue' --output text 2>/dev/null || echo "ERROR")
     canary_log "canary: alarm $name state=$state" >&2
@@ -273,6 +259,10 @@ canary_alarms_inspect() {
         fi
         status="alarm"
         ;;
+      None|"")
+        missing=1
+        none_count=$((none_count + 1))
+        ;;
       *)
         missing=1
         ;;
@@ -281,6 +271,37 @@ canary_alarms_inspect() {
   if [ "$missing" -eq 1 ]; then
     status="missing"
     firing=""
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$status" "$firing" "$none_count" "$total"
+}
+
+# Inspect the configured soak alarms.
+# stdout: STATUS<TAB>FIRING
+#   STATUS is ok | alarm | missing
+#   FIRING is a comma-separated list of names in ALARM (empty unless STATUS=alarm)
+# A missing/unreadable configured alarm is missing: the tick must not abort
+# the alias. ALARM plus a valid canary aborts. ok means every name is
+# OK or INSUFFICIENT_DATA.
+canary_alarms_inspect() {
+  local region="$1"
+  local names row status firing none_count total
+  names="$(canary_default_alarm_names)"
+  row="$(_canary_inspect_alarm_list "$region" "$names")"
+  IFS="$(printf '\t')" read -r status firing none_count total <<EOF
+$row
+EOF
+  # Pre-CDK cutover bridge: when a canary is still soaking on the previous
+  # stack template, deploy-prod defers CDK until that soak completes, so
+  # neither new alarm exists yet while both pre-cutover stack alarms still
+  # exist. Once CDK updates SchemaServiceStack-prod, the new alarms exist and
+  # the legacy alarms are removed, so any missing alarm fails closed.
+  if [ -z "${SCHEMA_CANARY_ALARM_NAMES:-}" ] && [ "$status" = "missing" ] && \
+     [ "$total" -gt 0 ] && [ "$none_count" -eq "$total" ]; then
+    canary_log "canary: service alarms not yet deployed in $region; checking pre-cutover stack alarms" >&2
+    row="$(_canary_inspect_alarm_list "$region" "schema-mutation-gate-hourly-quota-prod schema-mutation-gate-internal-error-prod")"
+    IFS="$(printf '\t')" read -r status firing _ _ <<EOF
+$row
+EOF
   fi
   printf '%s\t%s\n' "$status" "$firing"
 }
@@ -300,10 +321,10 @@ canary_alias_plan() {
 # previous version, AdditionalVersionWeights at CANARY_WEIGHT is the new
 # version, and Description stores the pair and the UTC start time.
 #
-# Abort order: describe both alarms first; a missing name fails before any
-# alias mutation; empty weights exit 0; any other weight map fails; a
-# deleted FunctionVersion fails; ALARM plus a valid canary rolls the alias
-# back, opens one GitHub issue, and exits non-zero.
+# Read the alias plan first: an idle alias exits 0 even before a first CDK
+# deploy creates new alarms. Any active canary (unproven, soaking, or due)
+# strictly fails closed (return 1) when any configured alarm is missing,
+# rolls back and opens a GitHub issue on ALARM, and promotes when due.
 tick_alias_canaries() {
   local region fn plan action old new revision promote inspect status firing
   if [ "${DEPLOY_FREEZE:-}" = "true" ]; then
@@ -320,14 +341,6 @@ tick_alias_canaries() {
     canary_log "ticker: no prod function"
     return 0
   fi
-  inspect="$(canary_alarms_inspect "$region")"
-  IFS="$(printf '\t')" read -r status firing <<EOF
-$inspect
-EOF
-  if [ "$status" = "missing" ]; then
-    canary_log "ticker: missing configured alarm — no alias change"
-    return 1
-  fi
   if ! plan="$(canary_alias_plan "$fn" "$region")"; then
     canary_log "ticker: cannot read or validate the live alias — move no alias"
     return 1
@@ -335,9 +348,17 @@ EOF
   IFS="$(printf '\t')" read -r action old new revision promote <<EOF
 $plan
 EOF
+  inspect="$(canary_alarms_inspect "$region")"
+  IFS="$(printf '\t')" read -r status firing <<EOF
+$inspect
+EOF
   case "$action" in
     idle)
-      canary_log "ticker: no staged canary on $fn"
+      if [ "$status" = "missing" ]; then
+        canary_log "ticker: no staged canary on $fn (configured alarm not yet created)"
+      else
+        canary_log "ticker: no staged canary on $fn"
+      fi
       return 0
       ;;
     bad_shape)
@@ -350,6 +371,10 @@ EOF
       return 1
       ;;
   esac
+  if [ "$status" = "missing" ]; then
+    canary_log "ticker: missing configured alarm — no alias change"
+    return 1
+  fi
   if ! version_exists "$fn" "$region" "$old"; then
     canary_log "ticker: FunctionVersion $old deleted — move no alias"
     return 1
