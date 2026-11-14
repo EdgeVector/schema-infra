@@ -13,7 +13,12 @@ for f in ./*.sh .lastgit/*.sh scripts/*.sh scripts/deploy/*.sh \
 done
 echo "== Python syntax =="
 PYTHONPYCACHEPREFIX="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/schema-python-compile" \
-  python3 -m py_compile scripts/deploy/canary-alias-state.py scripts/deploy/canary-definition-store.py scripts/deploy/check-schema-candidate.py
+  python3 -m py_compile \
+    scripts/deploy/bounded-command.py \
+    scripts/deploy/canary-alias-state.py \
+    scripts/deploy/check-schema-candidate.py \
+    scripts/proof/schema-lambda-fast-deployment/collect.py \
+    scripts/proof/schema-lambda-fast-deployment/prove.py
 echo "== npm/cdk compile =="
 npm_version="$(npm --version)"
 case "$npm_version" in 10.*|9.*) ;; *) echo "warn: npm $npm_version";; esac

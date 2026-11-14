@@ -5,10 +5,10 @@
 #   code-only        fold pin changed, CDK inputs did not → publish the
 #                    prebuilt digest-verified artifact via AWS CLI (no CDK,
 #                    no compile in the release path).
-#   infrastructure   CDK/config/layer/deploy-machinery changed → CDK deploy
+#   infrastructure   CDK/config/deploy-machinery changed → CDK deploy
 #                    referencing the prebuilt artifact (never compiles Rust
 #                    inside the CDK path).
-#   no-impact        docs/tests/proofs/frontend only → skip with an explicit
+#   no-impact        docs/proofs/frontend only → skip with an explicit
 #                    successful reason.
 #
 # Both deploying planes: DEV (us-west-2) → dev smoke → PROD (us-east-1) with
@@ -24,7 +24,7 @@
 #   CANARY_SOAK_HOURS=24         canary soak duration
 #   CANARY_WEIGHT=0.05           fraction of prod traffic on new version
 #   SCHEMA_CANARY_ALARM_NAMES    optional override; defaults to the required
-#                                production mutation-gate alarm set
+#                                production Lambda Errors + HTTP 5xx alarm set
 #   SCHEMA_DEPLOY_FORCE_KIND     override the classifier (code-only|
 #                                infrastructure|no-impact) for drills
 #   SCHEMA_DEPLOY_BASE_FILE      classify against this oid file instead of
@@ -164,9 +164,9 @@ fi
 
 # ---------- 0b. Ensure the artifact (build plane; once per input digest) ----------
 if [ "$KIND" = "infrastructure" ] && [ -f .gitmodules ] && [ "${LASTGIT_DEPLOY_SKIP_SUBMODULE:-}" != "1" ]; then
-  # Only the CDK path needs the fold submodule (Code.fromAsset + layer
-  # inputs). Code-only releases read the pin from the gitlink and consume
-  # the cached artifact directly.
+  # Only the CDK path needs the fold submodule initialized when building from
+  # source. Code-only releases read the pin from the gitlink and consume the
+  # cached artifact directly.
   git submodule update --init --recursive
 fi
 
@@ -246,10 +246,7 @@ if [ "$KIND" = "code-only" ]; then
   printf '%s\n' "$OID" > "$LAST_OID_FILE"
 else
   # ---------- INFRASTRUCTURE: CDK with the prebuilt artifact ----------
-  # CDK reads two assets: the extracted Lambda zip (materialized by
-  # ensure-artifact) and the fastembed model Layer. A fresh scratch has no
-  # layer yet — materialize it before --skip-build (release #2's failure).
-  bash scripts/deploy/ensure-layer.sh
+  # CDK reads the extracted Lambda zip materialized by ensure-artifact.sh.
   if [ "${SCHEMA_DEPLOY_SKIP_DEV:-}" = "1" ]; then
     echo "SCHEMA_DEPLOY_SKIP_DEV=1 — dev stages skipped (the caller deployed and smoked dev)"
   else
@@ -333,7 +330,7 @@ else
     canary_alert "prod canary REFUSED oid=$OID: previous version $OLD_VER is unavailable; candidate $NEW_VER stays unrouted"
     exit 1
   elif [ "$PIN_RC" -ne 0 ] && [ "$PIN_RC" -ne 1 ]; then
-    canary_alert "prod candidate, store, clock or revision check refused oid=$OID; no alias move"
+    canary_alert "prod candidate, clock or revision check refused oid=$OID; no alias move"
     exit 1
   fi
 fi

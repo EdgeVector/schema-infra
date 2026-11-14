@@ -106,7 +106,7 @@ else
         echo "CANARY_PIN=$CANARY_PIN"
         exit 1
     elif [ "$PIN_RC" -ne 1 ]; then
-        canary_alert "code-publish(prod): candidate, store, clock or revision check refused; no alias move"
+        canary_alert "code-publish(prod): candidate, clock or revision check refused; no alias move"
         exit 1
     else
         # Only an identical numbered version returns 1. No unguarded full move.

@@ -243,7 +243,7 @@ def collect(args: argparse.Namespace) -> int:
                 newest_manifest["artifact_size_bytes"]),
             "banned_packages_present": extra["banned_packages_present"],
             "banned_packages_checked": extra["banned_packages_checked"],
-            "embeddings_source": "pinned_opt_layer_network_denied",
+            "embeddings_source": "none_compile_time_vocabulary",
         }
     else:
         missing.append("dependency budget: need series releases plus "

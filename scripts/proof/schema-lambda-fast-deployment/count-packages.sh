@@ -34,7 +34,7 @@ trap 'rm -f "$TREE_FILE"' EXIT
 # --prefix none --no-dedupe off: default dedupe fine; we only need the set
 # of unique package names in the closure (normal deps; build/dev excluded).
 cargo tree --locked --manifest-path "$FOLD/Cargo.toml" \
-    -p schema_service_server_lambda --features fastembed \
+    -p schema_service_server_lambda \
     --target x86_64-unknown-linux-gnu \
     --edges normal --prefix none --format '{p}' \
     | awk '{print $1}' | sort -u > "$TREE_FILE"
