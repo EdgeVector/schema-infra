@@ -7,8 +7,7 @@ name: canary-ticker
 # Description stores the version pair and UTC start time. After 24 hours, alarms OK
 # move the alias to 100% on the new version. ALARM at any tick rolls the
 # alias back to the previous version, then opens one GitHub issue labeled
-# schema-canary-rollback. A host-local routine files the kanban card.
-# This runner never opens folddb.sock and never calls kanban.
+# schema-canary-rollback.
 #
 # A weight map that is not one key at 0.05 fails the tick and moves no alias.
 #

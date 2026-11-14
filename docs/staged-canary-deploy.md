@@ -13,7 +13,6 @@
 3. **GitHub `canary-ticker.yml`** (every 15m) waits **`CANARY_SOAK_HOURS` (default 24)**:
    - If soak elapsed and alarms OK → promote to **100%**
    - If alarms ALARM anytime → **rollback** to previous version, then open one GitHub issue labeled `schema-canary-rollback`
-   - A host-local routine (`scripts/deploy/file-canary-rollback-cards.sh`) files one kanban card from that issue. The GitHub runner never opens `folddb.sock` and never calls `kanban`.
    - The alias `Description` stores the UTC start time, previous version, new version, and weight. The weighted alias update writes this proof.
    - The GitHub ticker uses the alias `RevisionId` for each promotion or rollback. A concurrent alias change refuses the update.
    - The AWS `get-alias` response has no `LastModified` field.
@@ -50,13 +49,6 @@ Lambda is multi-tenant. **5% weighted alias traffic** is the live canary. Overri
 | `SCHEMA_CANARY_OPEN_ISSUE` | unset (`0`) | Set to `1` on the GitHub ticker so an abort opens one `schema-canary-rollback` issue. |
 
 An idle `live` alias (empty `AdditionalVersionWeights`) exits 0 even before a first CDK deploy creates new alarms. Whenever an active canary (`unproven`, `soaking`, or `due`) is present, a missing named alarm fails the tick and leaves the alias in place. Missing or mismatched clock proof fails a healthy tick and prevents promotion. An ALARM still rolls back a valid weighted alias without clock proof. A weight map that is not one key at 0.05 fails the tick and leaves the alias in place. A deleted live `FunctionVersion` fails the tick and leaves the alias in place. Rollback writes that `FunctionVersion` and clears the weight map. The issue body has four labeled lines: `alarm`, `function`, `old`, `new`.
-
-Install the host-local card filer on a machine that can open the LastDB socket:
-
-```bash
-scripts/deploy/install-canary-rollback-card-launchd.sh install
-scripts/deploy/install-canary-rollback-card-launchd.sh status
-```
 
 ## Adopt an existing canary without clock proof
 

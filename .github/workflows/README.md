@@ -64,7 +64,7 @@ If lastdb main does not contain the pin, `auto-deploy-on-fold.yml` fails. A pers
 - `canary-ticker.yml`: every 15 minutes. After 24 hours with the prod alarms
   OK, it promotes the 5% canary to 100%. An ALARM rolls the alias back and
   opens one GitHub issue labeled `schema-canary-rollback`. Then it runs the PROD
-  catch-up. The runner never calls `kanban`. A host-local routine files the card.
+  catch-up.
   Do not add an `environment:` key.
 
 `.lastgit/deploy-pipeline.sh`
