@@ -13,12 +13,12 @@ deploys DEV, smokes DEV, and follows the PROD canary rules. See
 
 ## Overview
 
-This project deploys the stateless advisory Schema Service for LastDB:
+This project deploys the advisory Schema Service for LastDB:
 
-- **Lambda Function**: Rust-based pure-CPU deterministic advisory service backed by compile-time `builtin_canonical_fields.json` (no runtime S3, DynamoDB, Secrets Manager, or ONNX/fastembed Layer dependencies)
+- **Lambda Function**: Rust advice backed by the built-in vocabulary and a private S3 snapshot of schemas from published apps
 - **API Gateway**: HTTP API (`GET`, `POST`, `OPTIONS`) with route rate limiting, CORS, and custom domain (`schema.folddb.com`)
 - **CloudWatch Alarms**: Per-environment alarms on Lambda `Errors` (`schema-service-lambda-errors-<env>`) and HTTP API `5xx` (`schema-service-http-5xx-<env>`) gating staged canary promotion
-- **Retained Historical Stores**: `SchemaBucket` (S3) and `AtomicVocabularyEmbeddingsTable` (DynamoDB) remain retained in CloudFormation with no Lambda grants
+- **Retained Stores**: The Lambda can read and write one catalog object in `SchemaBucket`. The historical embeddings table stays retained in CloudFormation.
 
 ## Release planes
 
@@ -50,10 +50,10 @@ go through `deploy.yml`.
 
 ## Architecture
 
-`schema_service_server_lambda` runs as a single stateless Lambda function behind an API Gateway v2 HTTP API (`live` alias):
+`schema_service_server_lambda` runs behind an API Gateway v2 HTTP API (`live` alias):
 
 1. **Compile-time vocabulary** — canonical fields and deterministic schema advice come from `builtin_canonical_fields.json` compiled directly into the Rust binary (`schema_service_core`).
-2. **Zero external runtime state** — the request path makes no calls to S3, R2, DynamoDB, Secrets Manager, or external model endpoints, and attaches no Lambda Layers.
+2. **Public schema examples** — a private EventBridge invocation verifies public registry lists and fetches pinned app manifests every five minutes. The same Lambda reads a cached copy of the catalog when serving advice. Health and vocabulary work independently of S3.
 3. **Real canary health gates** — production deploys route 5% of `live` alias traffic to the new numbered version and soak for 24 hours gated by `schema-service-lambda-errors-prod` and `schema-service-http-5xx-prod`.
 
 ## Structure
@@ -103,6 +103,28 @@ Lambda handler source lives in the [`EdgeVector/lastdb`](https://github.com/Edge
 scripts/deploy/smoke-dev.sh
 scripts/deploy/smoke-dev.sh prod
 ```
+
+### Public catalog proof
+
+After `live` serves the catalog-enabled revision, allow two feed intervals for
+new manifest ingestion. Use the stack's `SchemaServiceApiUrl` as
+`SCHEMA_SERVICE_URL` and ask for an example from the published Social app.
+
+```bash
+curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+  --data '{"schema":{"name":"Contact","fields":["person_id","contact_code","display_name","added_at"]}}' \
+  "${SCHEMA_SERVICE_URL%/}/v1/advice/schema" | jq -e '
+    select(.catalog.status == "current")
+    | [.findings[] | select(.kind == "similar_schema" and .evidence.schema.app_id == "social-graph")]
+    | first | .evidence.schema
+  '
+```
+
+Compare the result's channel, API version and commit with the same environment's
+signed App Registry listing. `SchemaCatalogFeedSchedule` invokes the private
+feed route; `schema-service-catalog-feed-failures-<env>` tracks repeated failures.
+The feed rejects images over 16 MiB and retains the last readable snapshot.
+S3 expires noncurrent versions under `advisory-catalog-v1/` after seven days.
 
 ### Schema Lambda fast-deployment terminal proof
 
