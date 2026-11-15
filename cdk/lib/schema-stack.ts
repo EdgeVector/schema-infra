@@ -15,6 +15,7 @@ import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Environment } from "./environment";
+import { schemaCatalog } from "./schema-catalog";
 import { schemaLiveVersion } from "./schema-live-version";
 
 export interface SchemaServiceStackProps extends StackProps {
@@ -50,13 +51,8 @@ export class SchemaServiceStack extends Stack {
       process.env.OBS_SENTRY_ENVIRONMENT ?? envName;
 
     // =====================================================
-    // Retained S3 Bucket (historical Schema Service state)
-    //
-    // The advisory Lambda is stateless and reads its canonical vocabulary
-    // from compile-time `builtin_canonical_fields.json`, with no S3 grant or
-    // runtime bucket env var. This retained bucket stays in the stack so
-    // CloudFormation never orphans or alters existing versioned objects or
-    // external stack-output readers.
+    // The catalog uses one key under its own prefix in the retained bucket.
+    // The canonical vocabulary remains compiled into the Lambda.
     // =====================================================
     const schemaBucket = new s3.Bucket(this, "SchemaBucket", {
       bucketName: `schema-service-${envName}-${Stack.of(this).account}`,
@@ -70,7 +66,7 @@ export class SchemaServiceStack extends Stack {
     // =====================================================
     // Schema Service Lambda Function
     // =====================================================
-    // Stateless deterministic advisory service built from `fold/`
+    // Advisory service built from `fold/`
     // (`schema_service/crates/server_lambda`). `build.sh` compiles the
     // AL2023 x86_64 zip and extracts it to `server_lambda-extracted`.
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
@@ -97,13 +93,16 @@ export class SchemaServiceStack extends Stack {
         removalPolicy: RemovalPolicy.RETAIN,
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
-      timeout: Duration.seconds(15),
+      // HTTP reads stay bounded in the handler. The scheduled feed needs
+      // time to reconcile signed lists and fetch new pinned manifests.
+      timeout: Duration.seconds(60),
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
         OBS_SENTRY_DSN: obsSentryDsn,
         OBS_SENTRY_RELEASE: obsSentryRelease,
         OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
+        SCHEMA_CATALOG_BUCKET: schemaBucket.bucketName,
         ENVIRONMENT: envName,
       },
     });
@@ -114,6 +113,7 @@ export class SchemaServiceStack extends Stack {
       aliasName: "live",
       version: schemaLiveVersion(this, schemaServiceFn, environment.isDev),
     });
+    schemaCatalog(this, schemaBucket, schemaServiceFn, schemaServiceLive, envName);
     new CfnOutput(this, "SchemaServiceCandidateVersion", {
       value: schemaServiceFn.currentVersion.version,
       description: "Published candidate; production traffic stays on the preserved live version",
