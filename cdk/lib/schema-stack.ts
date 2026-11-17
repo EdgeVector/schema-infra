@@ -162,6 +162,11 @@ export class SchemaServiceStack extends Stack {
         ThrottlingBurstLimit: 20,
         ThrottlingRateLimit: 10,
       },
+      // Each push reads one registry list and rewrites the catalog object.
+      "POST /v1/schemas": {
+        ThrottlingBurstLimit: 10,
+        ThrottlingRateLimit: 2,
+      },
     };
 
     // Root endpoint
@@ -186,6 +191,7 @@ export class SchemaServiceStack extends Stack {
     //   GET  /v1/health
     //   GET  /v1/fields/vocabulary
     //   POST /v1/advice/schema
+    //   POST /v1/schemas
     // =====================================================
     const v1Routes: Array<{
       path: string;
@@ -205,6 +211,14 @@ export class SchemaServiceStack extends Stack {
         integrationId: "SchemaAdviceIntegrationV1",
       },
       {
+        // `lastdb app publish` pushes an app's schema definitions here. The
+        // Lambda accepts a push only for an app the registry lists with the
+        // same commit and publisher key.
+        path: "/v1/schemas",
+        methods: [apigwv2.HttpMethod.POST],
+        integrationId: "SchemaPushIntegrationV1",
+      },
+      {
         path: "/v1/fields/vocabulary",
         methods: [apigwv2.HttpMethod.GET],
         integrationId: "CanonicalVocabularyIntegrationV1",
@@ -218,7 +232,7 @@ export class SchemaServiceStack extends Stack {
         integration: lambdaIntegration(route.integrationId),
       });
       // The stage's route settings reference this route by key.
-      if (route.path === "/v1/advice/schema") {
+      if (route.path === "/v1/advice/schema" || route.path === "/v1/schemas") {
         added.forEach((throttledRoute) => stage.node.addDependency(throttledRoute));
       }
     }

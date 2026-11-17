@@ -126,6 +126,12 @@ feed route; `schema-service-catalog-feed-failures-<env>` tracks repeated failure
 The feed rejects images over 16 MiB and retains the last readable snapshot.
 S3 expires noncurrent versions under `advisory-catalog-v1/` after seven days.
 
+The feed is being replaced (Tom, 2026-11-17): `lastdb app publish` pushes an
+app's schema definitions to `POST /v1/schemas`, and the Lambda keeps them in
+`schema-catalog-v2/catalog.json`. This stack already grants that object and
+routes and throttles that path. The schedule, the feed alarm and the
+`advisory-catalog-v1/` grant are removed once the push code is fully live in PROD.
+
 ### Schema Lambda fast-deployment terminal proof
 
 North Star terminal report for `north-star-schema-lambda-fast-deployment`.
@@ -163,6 +169,7 @@ health, canonical vocabulary, and schema advice):
 | GET        | `/v1/health`            | Health check                                                      |
 | GET        | `/v1/fields/vocabulary` | Read the standard canonical vocabulary                            |
 | POST       | `/v1/advice/schema`     | Advice for one draft schema declaration (read-only, non-blocking) |
+| POST       | `/v1/schemas`           | `lastdb app publish` pushes a listed app's schema definitions     |
 
 ## Environment Variables
 
