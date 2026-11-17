@@ -170,6 +170,7 @@ health, canonical vocabulary, and schema advice):
 | GET        | `/v1/fields/vocabulary` | Read the standard canonical vocabulary                            |
 | POST       | `/v1/advice/schema`     | Advice for one draft schema declaration (read-only, non-blocking) |
 | POST       | `/v1/schemas`           | `lastdb app publish` pushes a listed app's schema definitions     |
+| GET        | `/v1/schemas/{id}`      | One pushed definition by its definition id (immutable)            |
 
 ## Environment Variables
 
