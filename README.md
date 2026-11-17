@@ -106,31 +106,29 @@ scripts/deploy/smoke-dev.sh prod
 
 ### Public catalog proof
 
-After `live` serves the catalog-enabled revision, allow two feed intervals for
-new manifest ingestion. Use the stack's `SchemaServiceApiUrl` as
-`SCHEMA_SERVICE_URL` and ask for an example from the published Social app.
+`lastdb app publish` pushes an app's schema definitions to `POST /v1/schemas`.
+The Lambda accepts a push only for an app the signed App Registry list holds
+with the same commit and publisher key. It keeps one record per app and channel
+in `schema-catalog-v2/catalog.json` and one immutable object per definition id
+under `schema-catalog-v2/definitions/`. Nothing runs on a schedule; the catalog
+feed and its alarm were removed on 2026-11-17.
+
+After an app is published, read one of its definitions by the id in the
+listing's `access` block, and ask for advice on that definition:
 
 ```bash
-curl -fsS --max-time 10 -H 'Content-Type: application/json' \
-  --data '{"schema":{"name":"Contact","fields":["person_id","contact_code","display_name","added_at"]}}' \
+curl -fsS --max-time 10 "${SCHEMA_SERVICE_URL%/}/v1/schemas/${DEFINITION_ID}" \
+  | jq '{schema: .definition}' > draft.json
+curl -fsS --max-time 10 -H 'Content-Type: application/json' --data @draft.json \
   "${SCHEMA_SERVICE_URL%/}/v1/advice/schema" | jq -e '
     select(.catalog.status == "current")
-    | [.findings[] | select(.kind == "similar_schema" and .evidence.schema.app_id == "social-graph")]
-    | first | .evidence.schema
+    | [.findings[] | select(.kind == "similar_schema")] | first | .evidence.schema
   '
 ```
 
-Compare the result's channel, API version and commit with the same environment's
-signed App Registry listing. `SchemaCatalogFeedSchedule` invokes the private
-feed route; `schema-service-catalog-feed-failures-<env>` tracks repeated failures.
-The feed rejects images over 16 MiB and retains the last readable snapshot.
-S3 expires noncurrent versions under `advisory-catalog-v1/` after seven days.
-
-The feed is being replaced (Tom, 2026-11-17): `lastdb app publish` pushes an
-app's schema definitions to `POST /v1/schemas`, and the Lambda keeps them in
-`schema-catalog-v2/catalog.json`. This stack already grants that object and
-routes and throttles that path. The schedule, the feed alarm and the
-`advisory-catalog-v1/` grant are removed once the push code is fully live in PROD.
+Compare the result's app, channel, API version and commit with the same
+environment's signed App Registry listing. Objects left under
+`advisory-catalog-v1/` are the old feed image; no code reads them.
 
 ### Schema Lambda fast-deployment terminal proof
 

@@ -93,8 +93,8 @@ export class SchemaServiceStack extends Stack {
         removalPolicy: RemovalPolicy.RETAIN,
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
-      // HTTP reads stay bounded in the handler. The scheduled feed needs
-      // time to reconcile signed lists and fetch new pinned manifests.
+      // A schema push reads one signed registry list and writes the catalog
+      // objects, with retries on a write conflict.
       timeout: Duration.seconds(60),
       memorySize: 512,
       environment: {
@@ -113,7 +113,7 @@ export class SchemaServiceStack extends Stack {
       aliasName: "live",
       version: schemaLiveVersion(this, schemaServiceFn, environment.isDev),
     });
-    schemaCatalog(this, schemaBucket, schemaServiceFn, schemaServiceLive, envName);
+    schemaCatalog(schemaBucket, schemaServiceFn);
     new CfnOutput(this, "SchemaServiceCandidateVersion", {
       value: schemaServiceFn.currentVersion.version,
       description: "Published candidate; production traffic stays on the preserved live version",
