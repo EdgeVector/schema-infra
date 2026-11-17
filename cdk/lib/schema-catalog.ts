@@ -27,6 +27,9 @@ export function schemaCatalog(
       // Pushed schemas (POST /v1/schemas) live here. The feed image above
       // goes away with the feed once the push code is fully live.
       bucket.arnForObjects(`${PUSHED_PREFIX}catalog.json`),
+      // One immutable object per definition id, read by
+      // GET /v1/schemas/{definition_id}.
+      bucket.arnForObjects(`${PUSHED_PREFIX}definitions/*`),
     ],
   }));
   for (const prefix of [CATALOG_PREFIX, PUSHED_PREFIX]) {

@@ -192,6 +192,7 @@ export class SchemaServiceStack extends Stack {
     //   GET  /v1/fields/vocabulary
     //   POST /v1/advice/schema
     //   POST /v1/schemas
+    //   GET  /v1/schemas/{definition_id}
     // =====================================================
     const v1Routes: Array<{
       path: string;
@@ -217,6 +218,12 @@ export class SchemaServiceStack extends Stack {
         path: "/v1/schemas",
         methods: [apigwv2.HttpMethod.POST],
         integrationId: "SchemaPushIntegrationV1",
+      },
+      {
+        // A node reads one pushed definition by its definition id at install.
+        path: "/v1/schemas/{definition_id}",
+        methods: [apigwv2.HttpMethod.GET],
+        integrationId: "SchemaReadIntegrationV1",
       },
       {
         path: "/v1/fields/vocabulary",
