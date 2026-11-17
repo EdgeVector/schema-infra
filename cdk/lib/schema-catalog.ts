@@ -9,6 +9,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 const CATALOG_PREFIX = "advisory-catalog-v1/";
+const PUSHED_PREFIX = "schema-catalog-v2/";
 const FEED_PATH = "/v1/internal/catalog-feed";
 
 /** Schedule the code on the normal alias and scope access to the catalog image. */
@@ -21,12 +22,19 @@ export function schemaCatalog(
 ): void {
   service.addToRolePolicy(new iam.PolicyStatement({
     actions: ["s3:GetObject", "s3:PutObject"],
-    resources: [bucket.arnForObjects(`${CATALOG_PREFIX}catalog.json`)],
+    resources: [
+      bucket.arnForObjects(`${CATALOG_PREFIX}catalog.json`),
+      // Pushed schemas (POST /v1/schemas) live here. The feed image above
+      // goes away with the feed once the push code is fully live.
+      bucket.arnForObjects(`${PUSHED_PREFIX}catalog.json`),
+    ],
   }));
-  bucket.addLifecycleRule({
-    prefix: CATALOG_PREFIX,
-    noncurrentVersionExpiration: Duration.days(7),
-  });
+  for (const prefix of [CATALOG_PREFIX, PUSHED_PREFIX]) {
+    bucket.addLifecycleRule({
+      prefix,
+      noncurrentVersionExpiration: Duration.days(7),
+    });
+  }
 
   new events.Rule(scope, "SchemaCatalogFeedSchedule", {
     description: "Refreshes the advisory catalog from signed public app registry lists",
