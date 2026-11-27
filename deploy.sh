@@ -35,16 +35,13 @@ else
     BUILD_PROFILE="dev-release"
 fi
 
-# Compile-time release SHA for fold observability (build.rs). Prefer the
-# Actions commit when present; otherwise the schema-infra HEAD.
-export GITHUB_SHA="${GITHUB_SHA:-$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || true)}"
-
 echo "=== Deploying Schema Service Infrastructure ==="
 echo "Environment: $ENVIRONMENT"
 echo "Region: $REGION"
 echo "Build profile: $BUILD_PROFILE"
 echo "Sentry: OBS_SENTRY_DSN + ENVIRONMENT wired in CDK (exemem-backend DSN)"
 echo ""
+
 
 
 # Production confirmation
