@@ -7,6 +7,11 @@ const LOCAL_SCHEMA_FRONTEND_ORIGINS = [
 ];
 const PROD_SCHEMA_FRONTEND_ORIGINS = ["https://schema.folddb.com"];
 
+/** Public send-only DSN for the `exemem-backend` Sentry project (not a secret). */
+export const EXEMEM_BACKEND_SENTRY_DSN =
+  "https://c8ff0569892b895cdefa6378fd41eea8@o4511522196291584.ingest.us.sentry.io/4511737993166848"; // secret-scan-ok: public exemem-backend client DSN
+
+
 export class Environment {
   static fromName(name?: string, accountId?: string): Environment {
     return new Environment(name || DEFAULT_ENVIRONMENT_NAME, accountId);

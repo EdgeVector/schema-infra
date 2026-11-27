@@ -29,10 +29,9 @@ name: deploy
 # `repo:EdgeVector/schema-infra:ref:refs/heads/main` only, so the assume-role
 # call would fail.
 #
-# Optional repository variable OBS_SENTRY_DSN: deploy.sh calls
-# `gh variable get OBS_SENTRY_DSN` on prod. Do not put the value in a
-# step env map. Do not invent a DSN. A failed or unset get leaves the
-# Lambda DSN unset.
+# Schema Service Sentry: CDK sets OBS_SENTRY_DSN from the committed
+# EXEMEM_BACKEND_SENTRY_DSN constant and ENVIRONMENT to the stage.
+# Do not put a DSN in a step env map. Do not use Secrets Manager.
 on:
   workflow_run:
     workflows: [ci-required]

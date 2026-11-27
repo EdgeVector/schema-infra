@@ -57,10 +57,9 @@ If lastdb main does not contain the pin, `auto-deploy-on-fold.yml` fails. A pers
   In that run the dev job classifies against the PROD base. Do not add an `environment:`
   key: it changes the OIDC `sub` claim and the IAM trust rejects it. Roles:
   `SchemaInfraDeployDev`, `SchemaInfraDeployProd` (both trust
-  `ref:refs/heads/main` only). Secrets: org `GH_PAT` only. Optional
-  repository variable `OBS_SENTRY_DSN`: `deploy.sh` reads it with
-  `gh variable get` on prod and never prints it. Do not map it in a
-  step `env:` block. Do not invent a DSN. No Sentry project exists yet.
+  `ref:refs/heads/main` only).   Secrets: org `GH_PAT` only. Schema Service Sentry uses the committed
+  `EXEMEM_BACKEND_SENTRY_DSN` constant in CDK (`OBS_SENTRY_DSN` +
+  `ENVIRONMENT`); do not map a DSN in a step `env:` block or Secrets Manager.
 - `canary-ticker.yml`: every 15 minutes. After 24 hours with the prod alarms
   OK, it promotes the 5% canary to 100%. An ALARM rolls the alias back and
   opens one GitHub issue labeled `schema-canary-rollback`. Then it runs the PROD

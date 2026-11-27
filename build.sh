@@ -106,6 +106,21 @@ if needs_docker_mirror; then
     prepare_docker_mirror
 fi
 
+# fold observability build.rs requires a compile-time release SHA.
+# Bake the fold pin only: it is already in the artifact input digest
+# (scripts/deploy/artifact-digest.sh), so a cache hit always ships the
+# same Sentry release identity as a rebuild. Do not pass host
+# GITHUB_SHA / OBS_SENTRY_RELEASE — those are outside the digest and
+# would misattribute events when ensure-artifact.sh reuses a zip.
+RELEASE_SHA="$(git -C "$SCRIPT_DIR" ls-tree HEAD fold | awk '{print $3}')"
+if [ -z "$RELEASE_SHA" ]; then
+    RELEASE_SHA="$(git -C "$FOLD_DIR" rev-parse HEAD 2>/dev/null || true)"
+fi
+if [ -z "$RELEASE_SHA" ]; then
+    echo "ERROR: cannot resolve fold pin for observability release SHA" >&2
+    exit 1
+fi
+
 echo ""
 echo "=== Building Lambda zip (Docker: schema-infra-lambda-builder) ==="
 stage_started="$(schema_telemetry_stage_start build)"
@@ -118,9 +133,11 @@ docker run --rm \
     -e RUSTUP_HOME=/build/schema-infra/.docker-cache/rustup \
     -e BUILD_PROFILE="$PROFILE" \
     -e GH_PAT="${GH_PAT:-}" \
+    -e GITHUB_SHA="$RELEASE_SHA" \
     "$BUILDER_IMAGE" \
     bash /build/schema-infra/scripts/lambda-container-build.sh
 schema_telemetry_stage_end build "$stage_started"
+
 
 copy_mirror_lambda_artifact
 
