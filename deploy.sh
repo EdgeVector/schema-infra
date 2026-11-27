@@ -35,28 +35,17 @@ else
     BUILD_PROFILE="dev-release"
 fi
 
-GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
-export OBS_SENTRY_RELEASE="${OBS_SENTRY_RELEASE:-${OBS_RELEASE:-schema-infra@$GIT_SHA}}"
-export OBS_SENTRY_ENVIRONMENT="${OBS_SENTRY_ENVIRONMENT:-$ENVIRONMENT}"
-# Prod reads OBS_SENTRY_DSN from `gh variable get` (never from a workflow
-# step env map). The value is exported only for CDK synth into the Lambda
-# environment. A failed or unset get leaves the Lambda DSN unset.
-# shellcheck source=scripts/deploy/obs-sentry-dsn.sh
-source "$SCRIPT_DIR/scripts/deploy/obs-sentry-dsn.sh"
-schema_load_obs_sentry_dsn "$ENVIRONMENT"
+# Compile-time release SHA for fold observability (build.rs). Prefer the
+# Actions commit when present; otherwise the schema-infra HEAD.
+export GITHUB_SHA="${GITHUB_SHA:-$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || true)}"
 
 echo "=== Deploying Schema Service Infrastructure ==="
 echo "Environment: $ENVIRONMENT"
 echo "Region: $REGION"
 echo "Build profile: $BUILD_PROFILE"
-echo "Sentry environment: $OBS_SENTRY_ENVIRONMENT"
-echo "Sentry release: $OBS_SENTRY_RELEASE"
-if [ "${SCHEMA_OBS_SENTRY_DSN_SET:-0}" = "1" ]; then
-    echo "Sentry DSN: set"
-else
-    echo "Sentry DSN: unset"
-fi
+echo "Sentry: OBS_SENTRY_DSN + ENVIRONMENT wired in CDK (exemem-backend DSN)"
 echo ""
+
 
 # Production confirmation
 if [ "$ENVIRONMENT" = "prod" ] && [ "$YES_FLAG" != "true" ]; then

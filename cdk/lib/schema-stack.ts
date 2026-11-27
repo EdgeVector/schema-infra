@@ -14,9 +14,10 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
-import { Environment } from "./environment";
+import { Environment, EXEMEM_BACKEND_SENTRY_DSN } from "./environment";
 import { schemaCatalog } from "./schema-catalog";
 import { schemaLiveVersion } from "./schema-live-version";
+
 
 export interface SchemaServiceStackProps extends StackProps {
   environment?: string;
@@ -32,23 +33,6 @@ export class SchemaServiceStack extends Stack {
     );
     const envName = environment.name;
     const definitionNamespace = "canonical-v2";
-
-    // Backend Sentry config, added to the request-path Lambda. Prod deploy.sh
-    // loads OBS_SENTRY_DSN with `gh variable get` (echo off) and exports it
-    // only for this synth so it lands in the Lambda environment. Empty when
-    // the get fails or the variable is unset — no Sentry project is created
-    // here, and no DSN is invented. `observability::init_lambda` then leaves
-    // the Sentry sink off and CloudWatch logging is unchanged.
-    //
-    // OBS_SENTRY_RELEASE tags events with the exact deploy SHA/version, and
-    // OBS_SENTRY_ENVIRONMENT separates dev/prod events in Sentry. The fold
-    // observability crate reads these names directly when it builds
-    // sentry::ClientOptions.
-    const obsSentryDsn = process.env.OBS_SENTRY_DSN ?? "";
-    const obsSentryRelease =
-      process.env.OBS_SENTRY_RELEASE ?? process.env.OBS_RELEASE ?? "";
-    const obsSentryEnvironment =
-      process.env.OBS_SENTRY_ENVIRONMENT ?? envName;
 
     // =====================================================
     // The catalog uses one key under its own prefix in the retained bucket.
@@ -99,9 +83,9 @@ export class SchemaServiceStack extends Stack {
       memorySize: 512,
       environment: {
         RUST_LOG: "info",
-        OBS_SENTRY_DSN: obsSentryDsn,
-        OBS_SENTRY_RELEASE: obsSentryRelease,
-        OBS_SENTRY_ENVIRONMENT: obsSentryEnvironment,
+        // Public send-only DSN. lastdb observability refuses to start
+        // without OBS_SENTRY_DSN and ENVIRONMENT exactly `dev` or `prod`.
+        OBS_SENTRY_DSN: EXEMEM_BACKEND_SENTRY_DSN,
         SCHEMA_CATALOG_BUCKET: schemaBucket.bucketName,
         ENVIRONMENT: envName,
       },

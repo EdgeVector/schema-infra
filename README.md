@@ -175,10 +175,8 @@ health, canonical vocabulary, and schema advice):
 | Variable | Description |
 |----------|-------------|
 | `RUST_LOG` | Tracing log filter (`info`) |
-| `ENVIRONMENT` | Deployment environment name (`dev` or `prod`) |
-| `OBS_SENTRY_DSN` | Optional Sentry DSN. Prod `deploy.sh` reads the GitHub Actions variable of this name with `gh variable get` and never prints it; empty or a failed get disables the Sentry sink |
-| `OBS_SENTRY_RELEASE` | Sentry release tag; `deploy.sh` defaults this to `schema-infra@<git-sha>` |
-| `OBS_SENTRY_ENVIRONMENT` | Sentry environment tag; `deploy.sh` defaults this to the deploy target (`dev` or `prod`) |
+| `ENVIRONMENT` | Deployment environment name (`dev` or `prod`); required by fold observability |
+| `OBS_SENTRY_DSN` | Public send-only DSN for Sentry project `exemem-backend` (`EXEMEM_BACKEND_SENTRY_DSN` in CDK); required at Lambda start |
 
 The Lambda handler crate is [`schema_service/crates/server_lambda`](https://github.com/EdgeVector/lastdb/tree/main/schema_service/crates/server_lambda) in `EdgeVector/lastdb`.
 
