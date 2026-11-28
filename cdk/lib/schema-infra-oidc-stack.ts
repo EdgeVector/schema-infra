@@ -32,16 +32,36 @@ export interface SchemaInfraOidcStackProps extends StackProps {
 // GitHub deploy workflow must NOT use a GitHub `environment:` key: it changes
 // the OIDC `sub` claim to `environment:<name>`, and these trusts match the
 // ref-based claim only.
+//
+// Retirement (Tom, 2026-11-27): the GitHub OIDC provider is shared with
+// EdgeVector/exemem-infra (imported by ARN there). Never destroy the
+// provider. Context retireRoles=true removes only SchemaInfraDeploy* roles.
 export class SchemaInfraOidcStack extends Stack {
   constructor(scope: Construct, id: string, props: SchemaInfraOidcStackProps) {
     super(scope, id, props);
 
+    const retireRoles = this.node.tryGetContext("retireRoles") === "true";
+
     // Issuer URL and audience live in ./github-oidc.ts, the same literals the
     // trust-policy condition keys below are built from.
+    // Shared account-wide with exemem-infra (imported by ARN there).
+    // Teardown must never destroy this provider or this stack — only the
+    // SchemaInfraDeploy* roles (see context retireRoles=true).
     const provider = new iam.OpenIdConnectProvider(this, "GitHubOidcProvider", {
       url: GITHUB_OIDC_ISSUER_URL,
       clientIds: [GITHUB_OIDC_AUDIENCE],
     });
+
+    new CfnOutput(this, "GitHubOidcProviderArn", {
+      value: provider.openIdConnectProviderArn,
+      description: "Account-wide GitHub Actions OIDC provider ARN (shared; retained)",
+    });
+
+    if (retireRoles) {
+      // Roles omitted so CloudFormation deletes SchemaInfraDeployDev/Prod
+      // while keeping the shared OIDC provider resource.
+      return;
+    }
 
     const account = Stack.of(this).account;
     const cdkBootstrapRoleArns = (region: string) => [
@@ -157,6 +177,74 @@ export class SchemaInfraOidcStack extends Stack {
         }),
       );
 
+      // Retirement wipe (Tom, 2026-11-27): empty/delete the catalog bucket and
+      // embeddings table even when CloudFormation DeletionPolicy was RETAIN,
+      // then verify each resource is gone. Scoped to this env's names.
+      const schemaBucket = `schema-service-${envName}-${account}`;
+      const schemaTable = `schema-embeddings-${envName}-canonical-v2`;
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "TeardownSchemaBucket",
+          actions: [
+            "s3:ListBucket",
+            "s3:ListBucketVersions",
+            "s3:GetBucketLocation",
+            "s3:GetBucketVersioning",
+            "s3:GetObject",
+            "s3:DeleteObject",
+            "s3:DeleteObjectVersion",
+            "s3:DeleteBucket",
+          ],
+          resources: [
+            `arn:aws:s3:::${schemaBucket}`,
+            `arn:aws:s3:::${schemaBucket}/*`,
+          ],
+        }),
+      );
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "TeardownSchemaTable",
+          actions: [
+            "dynamodb:DescribeTable",
+            "dynamodb:DeleteTable",
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${account}:table/${schemaTable}`,
+          ],
+        }),
+      );
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "TeardownSchemaAlarmsLogsApi",
+          actions: [
+            "cloudwatch:DeleteAlarms",
+            "logs:DescribeLogGroups",
+            "logs:DeleteLogGroup",
+            "logs:DeleteRetentionPolicy",
+            "apigateway:GET",
+            "apigateway:DELETE",
+            "acm:DescribeCertificate",
+            "lambda:ListFunctions",
+            "lambda:DeleteFunction",
+            "lambda:ListVersionsByFunction",
+            "iam:GetRole",
+            "iam:ListOpenIDConnectProviders",
+          ],
+          resources: ["*"],
+        }),
+      );
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "TeardownReadCloudFormation",
+          actions: [
+            "cloudformation:DescribeStacks",
+            "cloudformation:DescribeStackResources",
+            "cloudformation:ListStackResources",
+          ],
+          resources: ["*"],
+        }),
+      );
+
       return role;
     };
 
@@ -199,10 +287,6 @@ export class SchemaInfraOidcStack extends Stack {
     new CfnOutput(this, "DeployProdRoleArn", {
       value: prodRole.roleArn,
       description: "ARN to wire into deploy.yml's deploy-prod job (role-to-assume)",
-    });
-    new CfnOutput(this, "GitHubOidcProviderArn", {
-      value: provider.openIdConnectProviderArn,
-      description: "Account-wide GitHub Actions OIDC provider ARN",
     });
   }
 }

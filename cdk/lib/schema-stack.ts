@@ -6,6 +6,7 @@ import {
   RemovalPolicy,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as path from "path";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
@@ -33,6 +34,12 @@ export class SchemaServiceStack extends Stack {
     );
     const envName = environment.name;
     const definitionNamespace = "canonical-v2";
+    // Retirement path (Tom, 2026-11-27): synth/destroy without fold assets,
+    // and override historical RETAIN so data is actually wiped.
+    const teardown = this.node.tryGetContext("teardown") === "true";
+    const dataRemovalPolicy = teardown
+      ? RemovalPolicy.DESTROY
+      : RemovalPolicy.RETAIN;
 
     // =====================================================
     // The catalog uses one key under its own prefix in the retained bucket.
@@ -43,7 +50,8 @@ export class SchemaServiceStack extends Stack {
       versioned: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: dataRemovalPolicy,
+      autoDeleteObjects: teardown,
       enforceSSL: true,
     });
 
@@ -53,13 +61,15 @@ export class SchemaServiceStack extends Stack {
     // Advisory service built from `fold/`
     // (`schema_service/crates/server_lambda`). `build.sh` compiles the
     // AL2023 x86_64 zip and extracts it to `server_lambda-extracted`.
+    // Teardown synth uses a committed stub so destroy does not need fold.
+    const lambdaCodePath = teardown
+      ? path.join(__dirname, "..", "teardown-stub")
+      : path.join(__dirname, "..", "..", "fold", "target", "lambda", "server_lambda-extracted");
     const schemaServiceFn = new lambda.Function(this, "SchemaServiceFn", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.X86_64,
       handler: "bootstrap",
-      code: lambda.Code.fromAsset(
-        "../fold/target/lambda/server_lambda-extracted",
-      ),
+      code: lambda.Code.fromAsset(lambdaCodePath),
       // Keep every published version when CDK replaces `currentVersion`.
       // Without this, CloudFormation deletes the previous version at the
       // end of each deploy (the default DeletionPolicy for
@@ -73,9 +83,12 @@ export class SchemaServiceStack extends Stack {
       // that is live when a resource leaves the stack. The first deploy
       // of this change still deletes the version that the previous template
       // owned; every later deploy retains it.
-      currentVersionOptions: {
-        removalPolicy: RemovalPolicy.RETAIN,
-      },
+      // Teardown deletes versions with the function.
+      currentVersionOptions: teardown
+        ? undefined
+        : {
+            removalPolicy: RemovalPolicy.RETAIN,
+          },
       logRetention: logs.RetentionDays.ONE_WEEK,
       // A schema push reads one signed registry list and writes the catalog
       // objects, with retries on a write conflict.
@@ -239,7 +252,7 @@ export class SchemaServiceStack extends Stack {
       partitionKey: { name: "kind", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "key", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: dataRemovalPolicy,
     });
 
     // =====================================================

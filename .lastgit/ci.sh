@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LastGit merge gate for schema-infra (not deploy).
+# LastGit merge gate for schema-infra (not deploy / not teardown AWS).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

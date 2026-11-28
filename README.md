@@ -1,185 +1,29 @@
 # Schema Infrastructure
 
-Standalone infrastructure for the LastDB Schema Service (`schema.folddb.com`).
+Standalone AWS infrastructure for the LastDB Schema Service (`schema.folddb.com`).
 
-## Repository Venue
+## Retirement in progress (2026-11-27)
 
-`schema-infra` is canonical on GitHub (`EdgeVector/schema-infra`) since 2026-09-30.
-Pull requests, the `ci-required` check, and merges use GitHub. The old LastGit
-and Forgejo copies are frozen. A Schema Service change in `EdgeVector/lastdb`
-deploys on merge: an auto-merged PR moves the `fold` pin, then `deploy.yml`
-deploys DEV, smokes DEV, and follows the PROD canary rules. See
-[`.github/workflows/README.md`](.github/workflows/README.md).
+Tom (CEO) decided on 2026-11-27 to remove the LastDB Schema Service entirely.
+`lastdb` #1946 (merge `11748793935057ad90b0f8598693862e4bc18fb5`) already
+removed all callers and the `server_lambda` crate, so this repo can no longer
+build a deploy from current lastdb.
 
-## Overview
+**This revision replaces the deploy pipeline with a one-shot CI teardown.**
+On merge to `main`, `.github/workflows/teardown.yml` destroys DEV then PROD
+(including catalog data), verifies each resource is gone, and removes the
+schema-infra deploy roles. The shared account GitHub OIDC provider is kept
+for `exemem-infra`.
 
-This project deploys the advisory Schema Service for LastDB:
+Do not redeploy. See [`.github/workflows/README.md`](.github/workflows/README.md).
 
-- **Lambda Function**: Rust advice backed by the built-in vocabulary and a private S3 snapshot of schemas from published apps
-- **API Gateway**: HTTP API (`GET`, `POST`, `OPTIONS`) with route rate limiting, CORS, and custom domain (`schema.folddb.com`)
-- **CloudWatch Alarms**: Per-environment alarms on Lambda `Errors` (`schema-service-lambda-errors-<env>`) and HTTP API `5xx` (`schema-service-http-5xx-<env>`) gating staged canary promotion
-- **Retained Stores**: The Lambda can read and write one catalog object in `SchemaBucket`. The historical embeddings table stays retained in CloudFormation.
+## What the stack used to own
 
-## Release planes
+- Lambda + API Gateway HTTP API (prod custom domain `schema.folddb.com`)
+- Private S3 catalog bucket (`schema-catalog-v2/` and legacy `advisory-catalog-v1/`)
+- DynamoDB table `schema-embeddings-<env>-canonical-v2`
+- CloudWatch alarms, log groups, Sentry via committed `OBS_SENTRY_DSN`
+- IAM roles `SchemaInfraDeployDev` / `SchemaInfraDeployProd`
 
-Every merge to `main` is classified by `scripts/deploy/classify-change.sh`
-(design: design-schema-lambda-fast-deployment) and takes one of three paths
-through `.lastgit/deploy-pipeline.sh`:
-
-- **code-only** — the fold submodule pin changed, CDK inputs did not. The
-  prebuilt, digest-verified artifact is published via the AWS CLI
-  (`update-function-code` → CodeSha256 gate → `publish-version` → `live`
-  alias / weighted prod canary). No CDK, no compilation in the release path.
-- **infrastructure** — CDK or deploy machinery inputs changed. CDK deploys
-  referencing the prebuilt artifact; Rust is never compiled inside the CDK
-  path.
-- **no-impact** — docs/proofs/frontend only. The deploy is skipped with an
-  explicit successful reason.
-
-Artifacts are built once per input digest into a content-addressed store with a
-secret-free manifest; pending main events coalesce to the newest eligible
-tip before any expensive work. Evidence for the North Star terminal proof
-is collected by `scripts/proof/schema-lambda-fast-deployment/collect.py`.
-
-### Build host
-
-`build.sh` runs the Lambda build in an Amazon Linux 2023 container in Docker
-(`--platform linux/amd64`). CI builds natively on the hosted x86_64 runner.
-A local Apple Silicon build runs under QEMU and can wedge. Production deploys
-go through `deploy.yml`.
-
-## Architecture
-
-`schema_service_server_lambda` runs behind an API Gateway v2 HTTP API (`live` alias):
-
-1. **Compile-time vocabulary** — canonical fields and deterministic schema advice come from `builtin_canonical_fields.json` compiled directly into the Rust binary (`schema_service_core`).
-2. **Public schema examples** — a private EventBridge invocation verifies public registry lists and fetches pinned app manifests every five minutes. The same Lambda reads a cached copy of the catalog when serving advice. Health and vocabulary work independently of S3.
-3. **Real canary health gates** — production deploys route 5% of `live` alias traffic to the new numbered version and soak for 24 hours gated by `schema-service-lambda-errors-prod` and `schema-service-http-5xx-prod`.
-
-## Structure
-
-```
-schema-infra/
-├── cdk/                    # CDK infrastructure (TypeScript)
-│   ├── bin/               # CDK app entry point
-│   ├── lib/               # Stack definitions
-│   └── package.json       # CDK dependencies
-├── fold/                  # Lambda handler source (submodule → EdgeVector/lastdb monorepo)
-├── build.sh              # Build Lambda zip in AL2023 container
-└── deploy.sh             # Deploy infrastructure
-```
-
-Lambda handler source lives in the [`EdgeVector/lastdb`](https://github.com/EdgeVector/lastdb) monorepo, vendored here as a submodule at `fold/`. `build.sh` runs `cargo lambda build -p schema_service_server_lambda --locked` inside the AL2023 builder container and extracts the deployable zip to `fold/target/lambda/server_lambda-extracted/`.
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18+
-- Docker (for AL2023 Lambda container build)
-- AWS CLI configured
-- CDK bootstrapped (`npx cdk bootstrap`)
-
-### Build
-
-```bash
-./build.sh
-```
-
-### Deploy
-
-```bash
-# Deploy to dev
-./deploy.sh dev
-
-# Deploy to production (schema.folddb.com)
-./deploy.sh prod
-```
-
-### Smoke check
-
-```bash
-# Against dev (default) or prod:
-scripts/deploy/smoke-dev.sh
-scripts/deploy/smoke-dev.sh prod
-```
-
-### Public catalog proof
-
-`lastdb app publish` pushes an app's schema definitions to `POST /v1/schemas`.
-The Lambda accepts a push only for an app the signed App Registry list holds
-with the same commit and publisher key. It keeps one record per app and channel
-in `schema-catalog-v2/catalog.json` and one immutable object per definition id
-under `schema-catalog-v2/definitions/`. Nothing runs on a schedule; the catalog
-feed and its alarm were removed on 2026-11-17.
-
-After an app is published, read one of its definitions by the id in the
-listing's `access` block, and ask for advice on that definition:
-
-```bash
-curl -fsS --max-time 10 "${SCHEMA_SERVICE_URL%/}/v1/schemas/${DEFINITION_ID}" \
-  | jq '{schema: .definition}' > draft.json
-curl -fsS --max-time 10 -H 'Content-Type: application/json' --data @draft.json \
-  "${SCHEMA_SERVICE_URL%/}/v1/advice/schema" | jq -e '
-    select(.catalog.status == "current")
-    | [.findings[] | select(.kind == "similar_schema")] | first | .evidence.schema
-  '
-```
-
-Compare the result's app, channel, API version and commit with the same
-environment's signed App Registry listing. Objects left under
-`advisory-catalog-v1/` are the old feed image; no code reads them.
-
-### Schema Lambda fast-deployment terminal proof
-
-North Star terminal report for `north-star-schema-lambda-fast-deployment`.
-Fail closed without redacted evidence; first line of
-`proofs/schema-lambda-fast-deployment.md` is `PASS` only when all criteria
-hold (ten-release timings, digests, dependency budget, path classification,
-coalescing, smoke/canary/alarms, rollback). No raw secrets in evidence or
-report.
-
-```bash
-# Operator (against a collected redacted evidence pack):
-scripts/proof/schema-lambda-fast-deployment/prove.sh \
-  --evidence-dir /path/to/redacted-evidence
-```
-
-Details: [`scripts/proof/schema-lambda-fast-deployment/README.md`](scripts/proof/schema-lambda-fast-deployment/README.md).
-
-### Custom Domain
-
-To enable the `schema.folddb.com` custom domain:
-
-1. Create an ACM certificate for `schema.folddb.com` in us-east-1
-2. Deploy with `./deploy.sh prod`
-3. Add a CNAME record pointing `schema.folddb.com` to the API Gateway domain
-
-## API Endpoints
-
-The Lambda serves the read-only advisory surface (`/` and `/health` plus `/v1/*`
-health, canonical vocabulary, and schema advice):
-
-| Method     | Path                    | Description                                                       |
-| ---------- | ----------------------- | ----------------------------------------------------------------- |
-| GET / POST | `/`                     | Service metadata and live endpoint index                          |
-| GET        | `/health`               | Health check (unversioned alias)                                  |
-| GET        | `/v1/health`            | Health check                                                      |
-| GET        | `/v1/fields/vocabulary` | Read the standard canonical vocabulary                            |
-| POST       | `/v1/advice/schema`     | Advice for one draft schema declaration (read-only, non-blocking) |
-| POST       | `/v1/schemas`           | `lastdb app publish` pushes a listed app's schema definitions     |
-| GET        | `/v1/schemas/{id}`      | One pushed definition by its definition id (immutable)            |
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `RUST_LOG` | Tracing log filter (`info`) |
-| `ENVIRONMENT` | Deployment environment name (`dev` or `prod`); required by fold observability |
-| `OBS_SENTRY_DSN` | Public send-only DSN for Sentry project `exemem-backend` (`EXEMEM_BACKEND_SENTRY_DSN` in CDK); required at Lambda start |
-
-The Lambda handler crate is [`schema_service/crates/server_lambda`](https://github.com/EdgeVector/lastdb/tree/main/schema_service/crates/server_lambda) in `EdgeVector/lastdb`.
-
-## License
-
-MIT / Apache 2.0
+DNS CNAME for `schema.folddb.com` and the imported ACM certificate were never
+CloudFormation-owned in this repo (and are not present in `exemem-infra`).
