@@ -1,9 +1,6 @@
 name: ci-required
 
-# Merge gate for schema-infra. Runs shell and Python syntax checks and the CDK compile
-# through .lastgit/ci.sh. This repo has no tests (deleted 2026-10-09). This
-# workflow NEVER deploys and holds no AWS credentials. Deploy is
-# `.github/workflows/deploy.yml` (see `.github/workflows/README.md`).
+# Minimal merge gate for the retired schema-infra repo.
 on:
   pull_request:
     branches: [main]
@@ -22,18 +19,13 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: cdk/package-lock.json
-      - name: Merge gate (.lastgit/ci.sh)
-        env:
-          NO_COLOR: "1"
-        run: bash .lastgit/ci.sh
+      - name: Retired repo gate
+        run: |
+          test -f README.md
+          echo "schema-infra is retired; gate OK"
 
   ci-required:
     name: ci-required

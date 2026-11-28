@@ -1,57 +1,9 @@
-# Dependencies
-node_modules/
-
-# Build outputs
-target/
-dist/
-
-# CDK compiled TypeScript (not frontend source)
-cdk/**/*.js
-cdk/**/*.d.ts
-cdk/**/*.js.map
-
-# CDK
-cdk.out/
-cdk.context.json
-cdk/outputs.json
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Lambda build artifacts
-*.zip
-bootstrap
-
-# Docker build caches
-.docker-cargo/
-.docker-rustup/
-.docker-cache/
-
-# schema_service submodule build artifacts (not tracked by the submodule
-# either; kept here so `git status` in schema-infra stays clean).
-schema_service/target/
-
-# Workspace fold_db is bind-mounted into this path by build.sh inside
-# Docker; suppress any host-side directory that docker may leave behind.
-fold_db/
-.portal-worktree
-
 # Generated operational output stays outside Git (Tom, 2026-10-23).
 /.evidence/
 /.benchmark-output/
 /benchmark-results/
 /bench-results/
-/.portal-worktree
+/portal-worktree
 **/__pycache__/
 *.pyc
 *.log
