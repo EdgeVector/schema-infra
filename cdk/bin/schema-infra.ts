@@ -26,9 +26,8 @@ if (identityOnly) {
 
 // Account-global IAM stack for the GitHub Actions OIDC provider + the
 // two deploy roles. Pinned to us-east-1 (IAM is global; the region only
-// determines where the CloudFormation stack itself lives). Deployed
-// manually with current credentials before flipping the workflows over
-// to OIDC; deploy.yml does NOT deploy this stack.
+// determines where the CloudFormation stack itself lives). Teardown CI
+// updates this stack once for wipe permissions, then destroys it last.
 new SchemaInfraOidcStack(app, "SchemaInfraOidcStack", {
   githubRepo: "EdgeVector/schema-infra",
   env: {
